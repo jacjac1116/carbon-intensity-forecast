@@ -1,1 +1,24 @@
+# Project metadata - describes what this package is
+[project]
+name = "carbon-forecast"
+version = "0.1.0"
+description = "UK grid carbon intensity forecasting system"
+requires-python = ">=3.10"
 
+# Every library your code imports goes here
+# Run pip install -e . after adding new ones
+dependencies = [
+    "pandas",
+    "requests",
+]
+
+# Build system - how pip installs the package
+# You rarely need to change this
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Tells setuptools your package code lives in src/
+# Without this, it won't find carbon_forecast/
+[tool.setuptools.packages.find]
+where = ["src"]

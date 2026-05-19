@@ -1,35 +1,57 @@
-import requests
 import pandas as pd
 import logging
+from carbon_forecast.data.base import BaseAPIClient
 
 logger = logging.getLogger(__name__)
 
 
-class CarbonIntensityClient:
+class CarbonIntensityClient(BaseAPIClient):
     """
     Client for retrieving UK National Grid carbon intensity data.
 
-    Features:
-        - Automatic date range chunking (14-day API limit)
-        - Retry handling
-        - Timeout handling
-        - API and HTTP error handling
-        - JSON normalisation into pandas DataFrame
+    This specific client extends 'BaseAPIClient' and provides functionality
+    specific to the UK Carbon Intensity API
+
+    Main responsibilities:
+    - Retrieve national carbon intensity data
+    - Handle API date-range limitations through chunking
+    - Reuse shared retry/error handling from BaseAPIClient
+    - Convert API responses into pandas DataFrames
+
+    Inherited functionality from BaseAPIClient:
+    - Persistent HTTP session management
+    - Retry handling
+    - Timeout handling
+    - HTTP/API error handling
+    - JSON response parsing
     """
 
-    BASE_URL = "https://api.carbonintensity.org.uk"
+    def __init__(self, **kwargs):
+        """
+        Initialise Carbon Intensity API client.
 
-    def __init__(self, retry: int = 3, timeout: int = 10):
+        Args:
+            **kwargs:
+                Additional keyword arguments passed to BaseAPIClient.
 
-        # Number of retry attempts per API request
-        self.retry = retry
+                Common options:
+                - retry (int):
+                    Number of retry attempts.
 
-        # Request timeout in seconds
-        self.timeout = timeout
+                - timeout (int):
+                    Request timeout in seconds.
+        """
 
-        # Reuse HTTP connections for better performance
-        self.session = requests.Session()
-        self.session.headers.update({"Accept": "application/json"})
+        # Initialise shared base client functionality
+        super().__init__(
+            base_url="https://api.carbonintensity.org.uk",
+            **kwargs
+        )
+
+        # Set default request headers for JSON responses
+        self.session.headers.update({
+            "Accept": "application/json"
+        })
 
     def _generate_ranges(
         self,
@@ -65,53 +87,6 @@ class CarbonIntensityClient:
             current_start = current_end + pd.Timedelta(minutes=30)
 
         return ranges
-
-    def _make_request(self, url: str) -> dict | None:
-        """
-        Execute API request with retry handling.
-
-        Returns:
-            Parsed JSON dictionary if successful.
-            None if all retries fail.
-        """
-        for attempt in range(1, self.retry + 1):
-
-            try:
-                r = self.session.get(url, timeout=self.timeout)
-                r.raise_for_status()
-
-                data = r.json()
-
-                # Check for API-level errors
-                if "error" in data:
-                    code = data["error"]["code"]
-                    msg = data["error"]["message"]
-                    logger.error(f"API Error | {code}: {msg}")
-                    return None
-
-                return data
-
-            except requests.exceptions.Timeout:
-                logger.warning(
-                    f"Timeout | Attempt {attempt}/{self.retry} | {url}"
-                )
-
-            except requests.exceptions.HTTPError as e:
-                logger.error(
-                    f"HTTP Error | Attempt {attempt}/{self.retry} | {e}"
-                )
-
-            except requests.exceptions.RequestException as e:
-                logger.error(
-                    f"Request Error | Attempt {attempt}/{self.retry} | {e}"
-                )
-
-            except ValueError:
-                logger.error(f"Invalid JSON response | {url}")
-                return None
-
-        logger.error(f"All {self.retry} attempts failed | {url}")
-        return None
 
     def _parse_data(self, data: dict) -> pd.DataFrame:
         """
@@ -154,7 +129,7 @@ class CarbonIntensityClient:
         for d in ranges:
 
             url = (
-                f"{self.BASE_URL}"
+                f"{self.base_url}"
                 f"/intensity/{d['start']}/{d['end']}"
             )
 
@@ -164,7 +139,7 @@ class CarbonIntensityClient:
                 failed_ranges.append(d)
                 continue
 
-            if "data" not in data or not data["data"]:
+            if not data or "data" not in data or not data["data"]:
                 start_str = d["start"]
                 end_str = d["end"]
                 logger.warning(f"No data returned for {start_str} -> {end_str}")
@@ -190,13 +165,118 @@ class CarbonIntensityClient:
 
         return final_df
 
+class GenerationMixClient(BaseAPIClient):
+    """
+    Client for retrieving UK electricity generation mix data from NESO.
 
+    This dataset provides time series information on electricity generation
+    by fuel type (e.g. gas, coal, wind, solar, nuclear).
+
+    Key features:
+    - Pulls full generation mix dataset from NESO datastore API
+    - Normalises nested JSON response into a pandas DataFrame
+    - Sorts data chronologically
+    - Removes redundant percentage and derived columns for cleaner analysis
+
+    Typical use cases:
+    - Energy mix analysis over time
+    - Renewable penetration studies
+    - Carbon intensity correlation analysis
+    """
+
+    def __init__(self, **kwargs):
+        """
+        Initialise GenerationMixClient.
+
+        Args:
+            **kwargs:
+                Passed through to BaseAPIClient.
+
+                Common parameters:
+                - retry (int): number of retry attempts
+                - timeout (int): request timeout in seconds
+        """
+
+        # NESO datastore endpoint for generation mix data
+        super().__init__(
+            base_url=(
+                "https://api.neso.energy/api/3/action/datastore_search"
+                "?resource_id=f93d1835-75bc-43e5-84ad-12472b180a98"
+                "&limit=310000"
+            ),
+            **kwargs
+        )
+
+    def fetch(self, start: str = None, end: str = None) -> pd.DataFrame:
+        """
+        Fetch generation mix data from NESO API and return as a DataFrame.
+
+        Returns:
+            pd.DataFrame:
+                Cleaned and time-sorted generation mix dataset.
+
+        Raises:
+            ValueError:
+                If API response contains no records or is malformed.
+        """
+
+        # Execute API request using shared base method
+        data = self._make_request(self.base_url)
+
+        # Validate response structure
+        if not data or 'result' not in data or not data['result']['records']:
+            logger.error("No data was found, aborting ...")
+            raise ValueError("No generation mix data returned from API.")
+
+        # Flatten JSON records into tabular structure
+        df = pd.json_normalize(data['result']['records'])
+
+        # Ensure chronological ordering for time-series analysis
+        df = df.sort_values(by='DATETIME')
+
+        # Drop percentage and derived columns to keep dataset lightweight
+        # (These can be recalculated if needed for analysis)
+        df = df.drop(columns=[
+            '_id',
+            'GAS_perc',
+            'COAL_perc',
+            'NUCLEAR_perc',
+            'WIND_perc',
+            'WIND_EMB_perc',
+            'HYDRO_perc',
+            'IMPORTS_perc',
+            'BIOMASS_perc',
+            'OTHER_perc',
+            'SOLAR_perc',
+            'STORAGE_perc',
+            'GENERATION_perc',
+            'LOW_CARBON_perc',
+            'ZERO_CARBON_perc',
+            'RENEWABLE_perc',
+            'FOSSIL_perc',
+            'WIND_EMB',
+            'CARBON_INTENSITY'
+        ])
+
+        df["DATETIME"] = pd.to_datetime(df["DATETIME"], utc=True)
+        if start:
+            df = df[df["DATETIME"] >= pd.Timestamp(start, tz="UTC")]
+        if end:
+            df = df[df["DATETIME"] <= pd.Timestamp(end, tz="UTC")]
+
+        return df
+
+
+################################################################
 if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO) # loggs Info and above. The hierarchy is DEBUG < INFO < WARNING < ERROR < CRITICAL. Setting INFO means you'll see INFO, WARNING, and ERROR messages but not DEBUG.
+#
+#   client = CarbonIntensityClient(retry=3, timeout=5)
+#    df = client.fetch(start="2024-01-01", end="2024-07-07")
 
-    client = CarbonIntensityClient(retry=3, timeout=5)
-    df = client.fetch(start="2024-01-01", end="2024-07-07")
+    client = GenerationMixClient()
+    df = client.fetch()
 
     print(df.head())
     print(f"\nShape: {df.shape}")
