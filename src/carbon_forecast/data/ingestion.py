@@ -268,8 +268,41 @@ class GenerationMixClient(BaseAPIClient):
         return df
     
 class WeatherClient(BaseAPIClient):
+    """
+    Client for retrieving historical weather data from Open-Meteo.
+
+    This client is designed specifically for energy and carbon intensity
+    forecasting applications.
+
+    Main responsibilities:
+    - Retrieve historical hourly weather data
+    - Validate input date formats
+    - Query multiple strategic UK locations
+    - Rename weather variables with location prefixes
+    - Combine all locations into a single feature table
+
+    Default locations were selected to represent:
+    - Offshore wind conditions
+    - Onshore wind conditions
+    - Electricity demand centres
+    - Solar generation regions
+    """
 
     def __init__(self, **kwargs):
+        """
+        Initialise WeatherClient.
+
+        Args:
+            **kwargs:
+                Additional keyword arguments passed to BaseAPIClient.
+
+                Common options:
+                - retry (int):
+                    Number of retry attempts.
+
+                - timeout (int):
+                    Request timeout in seconds.
+        """
         super().__init__(
             base_url='https://archive-api.open-meteo.com/v1/archive',
             **kwargs
@@ -304,61 +337,167 @@ class WeatherClient(BaseAPIClient):
               cols: list[str] = None,
               locations: dict = None
               ):
-        
+        """
+        Fetch historical weather data for multiple locations.
+
+        Args:
+            start_date:
+                Start date in YYYY-MM-DD format.
+
+            end_date:
+                End date in YYYY-MM-DD format.
+
+            cols:
+                List of hourly weather variables to retrieve.
+
+                Defaults to:
+                - temperature_2m
+                - wind_speed_100m
+                - direct_radiation
+                - cloud_cover
+                - pressure_msl
+
+            locations:
+                Dictionary of locations and coordinates.
+
+                Format:
+                    {
+                        "location_name": [latitude, longitude]
+                    }
+
+        Returns:
+            pd.DataFrame:
+                Combined weather dataset indexed by UTC timestamp.
+
+        Raises:
+            ValueError:
+                If date format is invalid.
+        """
+
+        # -----------------------------------
+        # DEFAULT WEATHER VARIABLES
+        # -----------------------------------
+
+        # Default weather variables selected for:
+        # - wind generation forecasting
+        # - solar generation forecasting
+        # - electricity demand modelling
         if cols is None:
-            cols = ["temperature_2m", "wind_speed_100m", "direct_radiation", "cloud_cover", "pressure_msl"]
-    
+
+            cols = [
+                "temperature_2m",
+                "wind_speed_100m",
+                "direct_radiation",
+                "cloud_cover",
+                "pressure_msl"
+            ]
+
+        # -----------------------------------
+        # DEFAULT ENERGY-RELEVANT LOCATIONS
+        # -----------------------------------
+
         if locations is None:
+
             locations = {
-                "aberdeen": [57.15, -2.09],  # Offshore wind proxy
-                "glasgow": [55.86, -4.25],   # Onshore wind / Atlantic systems
-                "london": [51.51, -0.13],    # Demand / temperature proxy
-                "exeter": [50.72, -3.53]     # Solar / southwest weather proxy
+
+                # Offshore wind generation proxy
+                "aberdeen": [57.15, -2.09],
+
+                # Onshore wind + Atlantic weather systems
+                "glasgow": [55.86, -4.25],
+
+                # Demand / population centre proxy
+                "london": [51.51, -0.13],
+
+                # Solar generation / southwest weather proxy
+                "exeter": [50.72, -3.53]
             }
 
+        # -----------------------------------
+        # INPUT VALIDATION
+        # -----------------------------------
+
+        # Validate input date formats
         self._validate_date(start_date)
         self._validate_date(end_date)
 
-        # Store individual location DataFrames
+        # Store location-specific DataFrames
         dfs = []
 
-        # Loop through each location
+        # -----------------------------------
+        # FETCH WEATHER DATA
+        # -----------------------------------
+
+        # Loop through each configured location
         for name, coords in locations.items():
 
             # API query parameters
             params = {
+
+                # Geographic coordinates
                 "latitude": coords[0],
                 "longitude": coords[1],
 
-                # Energy-relevant weather variables
+                # Requested hourly weather variables
                 "hourly": ",".join(cols),
+
+                # Date range
                 "start_date": start_date,
                 "end_date": end_date,
+
+                # Force UTC timestamps for alignment with
+                # NESO / carbon intensity datasets
                 "timezone": "UTC"
             }
 
-            # Execute API request using shared base method
-            data = self._make_request(self.base_url, params=params)
+            # Execute API request using shared BaseAPIClient logic
+            data = self._make_request(
+                self.base_url,
+                params=params
+            )
 
-            # Convert hourly weather data into DataFrame
+            # -----------------------------------
+            # DATA TRANSFORMATION
+            # -----------------------------------
+
+            # Convert hourly weather JSON into DataFrame
             df = pd.DataFrame(data["hourly"])
 
-            # Convert timestamps to UTC-aware datetime
+            # Convert timestamps into timezone-aware datetime
             df["time"] = pd.to_datetime(
                 df["time"],
                 utc=True
             )
 
-            # Rename weather columns with location prefix
+            # Rename weather columns using location prefix
+            #
             # Example:
-            # temperature_2m -> aberdeen_temperature_2m
-            df = df.rename(columns={col: f"{name}_{col}" for col in df.columns if col != "time"})
+            # temperature_2m
+            # ->
+            # aberdeen_temperature_2m
+            df = df.rename(
+                columns={
+                    col: f"{name}_{col}"
+                    for col in df.columns
+                    if col != "time"
+                }
+            )
 
-            # Store location DataFrame
-            df = df.set_index('time')
+            # Use timestamp as DataFrame index
+            df = df.set_index("time")
+
+            # Store processed location DataFrame
             dfs.append(df)
 
-        weather_df = pd.concat(dfs, axis=1)
+        # -----------------------------------
+        # MERGE ALL LOCATIONS
+        # -----------------------------------
+
+        # Combine all weather locations into one wide feature table
+        weather_df = pd.concat(
+            dfs,
+            axis=1
+        )
 
         return weather_df
 
