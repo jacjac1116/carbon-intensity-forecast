@@ -90,12 +90,23 @@ class FeatureEngineer():
         dummy_season = pd.get_dummies(df['season'], drop_first=True, prefix='season')
         df = pd.concat([df, dummy_season], axis=1)
 
+        # Hour 23 and hour 0 are 1 hour apart but numerically are 23 units apart
+        # A linear model sees them as vastly different, but by using sin/cos we make
+        # the data cyclical so adjacent values remain similar
+
+        # sin(6am) = sin(6pm) but cos(6am) != cos(6pm) ->prevents ambiguous mapping by using both
         df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
         df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
         df['day_of_week_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
         df['day_of_week_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
         df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
-        df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)  
+        df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+
+        # Tree based models make threshold splits:  "is hour > 16?" With raw integers
+        # that's one split to capture the evening peak. With sin/cos, it would need
+        # several complex splits to achieve the same. 
+
+        # Trees can suffer with just sin/cos encoding, thus those columns won't be dropped
 
         df.drop(columns=['bank_holiday', 'holiday_type', 'season'], inplace=True)
 
