@@ -334,6 +334,7 @@ class WeatherClient(BaseAPIClient):
     def fetch(self, 
               start_date: str, 
               end_date: str,
+              forecast: bool = False,
               cols: list[str] = None,
               locations: dict = None
               ):
@@ -451,10 +452,12 @@ class WeatherClient(BaseAPIClient):
             }
 
             # Execute API request using shared BaseAPIClient logic
-            data = self._make_request(
-                self.base_url,
-                params=params
-            )
+            base = ("https://historical-forecast-api.open-meteo.com/v1/forecast"
+                    if forecast
+                    else self.base_url
+                )
+
+            data = self._make_request(base, params=params)
 
             # -----------------------------------
             # DATA TRANSFORMATION
@@ -470,18 +473,9 @@ class WeatherClient(BaseAPIClient):
             )
 
             # Rename weather columns using location prefix
-            #
-            # Example:
-            # temperature_2m
-            # ->
-            # aberdeen_temperature_2m
-            df = df.rename(
-                columns={
-                    col: f"{name}_{col}"
-                    for col in df.columns
-                    if col != "time"
-                }
-            )
+            prefix = f'{name}_fcst' if forecast else name
+
+            df = df.rename(columns={col:f'{prefix}_{col}' for col in df.columns if col != 'time'})
 
             # Use timestamp as DataFrame index
             df = df.set_index("time")

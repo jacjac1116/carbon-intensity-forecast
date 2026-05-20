@@ -26,7 +26,7 @@ class AlignmentPipeline:
         self,
         carbon_df: pd.DataFrame,
         gen_df: pd.DataFrame,
-        weather_df: pd.DataFrame
+        weather_df: pd.DataFrame,
     ):
         """
         Initialise AlignmentPipeline.
@@ -329,6 +329,14 @@ if __name__ == "__main__":
         end_date=end
     )
 
+    weather_fcst = weather_client.fetch(
+        start_date=start,
+        end_date=end,
+        forecast=True
+    )
+
+    weather_df = weather.join(weather_fcst)
+
     # -----------------------------------
     # ALIGN DATASETS
     # -----------------------------------
@@ -336,7 +344,7 @@ if __name__ == "__main__":
     alignment = AlignmentPipeline(
         carbon_df=carbon,
         gen_df=generation,
-        weather_df=weather
+        weather_df=weather_df
     )
 
     final_df = alignment.transform()
