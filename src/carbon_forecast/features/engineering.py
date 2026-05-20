@@ -30,6 +30,13 @@ class FeatureEngineer():
         
         df['rolling_24h'] = df[self.target_col].rolling(window=48).mean()
         df['rolling_24h_std'] = df[self.target_col].rolling(window=48).std()
+        df['london_temperature_2m_rolling_24h'] = df['london_temperature_2m'].rolling(window=48).mean()
+        df['exeter_direct_radiation_rolling_24h'] = df['exeter_direct_radiation'].rolling(window=48).mean()
+        df['glasgow_wind_speed_100m_rolling_24h'] = df['glasgow_wind_speed_100m'].rolling(window=48).mean()
+        df['aberdeen_wind_speed_100m_rolling_24h'] = df['aberdeen_wind_speed_100m'].rolling(window=48).mean()
+
+        df['glasgow_wind_speed_100m_rolling_72h'] = df['glasgow_wind_speed_100m'].rolling(window=72*2).mean()
+        df['aberdeen_wind_speed_100m_rolling_72h'] = df['aberdeen_wind_speed_100m'].rolling(window=72*2).mean()
        
         df['rolling_7d'] = df[self.target_col].rolling(window=48*7).mean()
         df['rolling_7d_std'] = df[self.target_col].rolling(window=48*7).std()
