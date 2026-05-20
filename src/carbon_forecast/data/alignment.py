@@ -9,12 +9,39 @@ from carbon_forecast.data.ingestion import (
 logger = logging.getLogger(__name__)
 
 class AlignmentPipeline:
+    """
+    Pipeline for aligning and merging multiple energy-related datasets.
 
-    def __init__(self,
-                 carbon_df: pd.DataFrame,
-                 gen_df: pd.DataFrame,
-                 weather_df: pd.DataFrame
-                 ):
+    This pipeline standardises datetime indexes, validates data quality,
+    detects gaps/duplicates, aligns datasets to a common time window,
+    and merges them into a single modelling-ready DataFrame.
+
+    Datasets:
+    - Carbon intensity data
+    - Generation mix data
+    - Weather data
+    """
+
+    def __init__(
+        self,
+        carbon_df: pd.DataFrame,
+        gen_df: pd.DataFrame,
+        weather_df: pd.DataFrame
+    ):
+        """
+        Initialise AlignmentPipeline.
+
+        Args:
+            carbon_df:
+                Carbon intensity dataset.
+
+            gen_df:
+                Electricity generation mix dataset.
+
+            weather_df:
+                Historical weather dataset.
+        """
+
         self.carbon_df = carbon_df
         self.gen_df = gen_df
         self.weather_df = weather_df
@@ -60,23 +87,52 @@ class AlignmentPipeline:
             # GAP DETECTION
             # -----------------------------------
 
+            # Expected granularity
             expected = pd.Timedelta(minutes=30)
-            freq = df.index.to_series().diff().dropna() # creates a dataset showing the time differenec between rows
+
+            # Calculate difference between consecutive timestamps
+            #
+            # Example:
+            # 00:00 -> 00:30 = 30 mins
+            # 00:30 -> 02:00 = 90 mins (gap)
+            freq = (
+                df.index
+                .to_series()
+                .diff()
+                .dropna()
+            )
+
+            # Find intervals that are not 30 minutes
             gaps = freq[freq != expected]
 
             if not gaps.empty:
 
-                logger.warning(f'{name}: {len(gaps)} irregular intervals detected')
+                logger.warning(
+                    f"{name}: "
+                    f"{len(gaps)} irregular intervals detected"
+                )
 
+                # -----------------------------------
+                # MISSING TIMESTAMP DETECTION
+                # -----------------------------------
+
+                # Build expected continuous 30-minute timeline
                 expected_index = pd.date_range(
                     start=df.index.min(),
                     end=df.index.max(),
                     freq="30min"
                 )
 
-                missing_timesteps = expected_index.difference(df.index)
+                # Detect missing timestamps
+                missing_timesteps = (
+                    expected_index
+                    .difference(df.index)
+                )
 
-                logger.warning(f'Missing data on :\n{missing_timesteps}')
+                logger.warning(
+                    f"{name}: Missing timestamps detected:\n"
+                    f"{missing_timesteps}"
+                )
 
                 logger.warning(
                     f"{name}: Largest gap = {gaps.max()}"
@@ -129,6 +185,9 @@ class AlignmentPipeline:
         # MERGE DATASETS
         # -----------------------------------
 
+        # Use inner joins to keep only timestamps
+        # present in all datasets
+
         merged = (
             carbon
             .join(generation, how="inner")
@@ -160,14 +219,57 @@ class AlignmentPipeline:
 
         
     
-    def transform(self):
+    def transform(self) -> pd.DataFrame:
+        """
+        Standardise and align all datasets.
 
-        self.carbon_df = self.carbon_df.rename(columns={"from": "datetime"}).set_index("datetime")
-        self.gen_df = self.gen_df.rename(columns={"DATETIME": "datetime"}).set_index("datetime")
-        # weather_df already has "time" as index
+        This method:
+        - Standardises datetime column names
+        - Sets datetime indexes
+        - Resamples weather data to 30-minute frequency
+        - Aligns all datasets
+        - Returns merged modelling dataset
+
+        Returns:
+            pd.DataFrame:
+                Fully aligned merged dataset.
+        """
+
+        # -----------------------------------
+        # STANDARDISE DATETIME COLUMNS
+        # -----------------------------------
+
+        # Carbon dataset:
+        # "from" -> "datetime"
+        self.carbon_df = (
+            self.carbon_df
+            .rename(columns={"from": "datetime"})
+            .set_index("datetime")
+        )
+
+        # Generation dataset:
+        # "DATETIME" -> "datetime"
+        self.gen_df = (
+            self.gen_df
+            .rename(columns={"DATETIME": "datetime"})
+            .set_index("datetime")
+        )
+
+        # Weather dataset already uses datetime index
         self.weather_df.index.name = "datetime"
 
-        self.weather_df = self.weather_df.resample('30min').interpolate()
+        # -----------------------------------
+        # RESAMPLE WEATHER DATA
+        # -----------------------------------
+
+        # Weather data is typically hourly.
+        # Interpolate to 30-minute granularity
+        # to align with settlement-period datasets.
+        self.weather_df = (
+            self.weather_df
+            .resample("30min")
+            .interpolate()
+        )
 
         # -----------------------------------
         # INPUT DATASETS
@@ -179,36 +281,72 @@ class AlignmentPipeline:
             "weather": self.weather_df
         }
 
+        # Align and merge datasets
         merged = self._align(dfs)
 
         return merged
 
 
+if __name__ == "__main__":
 
-
-if __name__ == '__name__':
-
+    # Configure logging
     logging.basicConfig(level=logging.INFO)
 
-    start = '2021-01-01'
-    end = '2021-12-31'
+    # -----------------------------------
+    # DATE RANGE
+    # -----------------------------------
+
+    start = "2021-01-01"
+    end = "2021-12-31"
+
+    # -----------------------------------
+    # FETCH CARBON INTENSITY DATA
+    # -----------------------------------
 
     carbon_client = CarbonIntensityClient()
-    carbon = carbon_client.fetch(start=start, end=end)
+
+    carbon = carbon_client.fetch(
+        start=start,
+        end=end
+    )
+
+    # -----------------------------------
+    # FETCH GENERATION MIX DATA
+    # -----------------------------------
 
     generation_client = GenerationMixClient()
+
     generation = generation_client.fetch()
 
-    weather_client = WeatherClient()
-    weather = weather_client.fetch(start_date=start, end_date=end)
+    # -----------------------------------
+    # FETCH WEATHER DATA
+    # -----------------------------------
 
-    alignement = AlignmentPipeline(
+    weather_client = WeatherClient()
+
+    weather = weather_client.fetch(
+        start_date=start,
+        end_date=end
+    )
+
+    # -----------------------------------
+    # ALIGN DATASETS
+    # -----------------------------------
+
+    alignment = AlignmentPipeline(
         carbon_df=carbon,
         gen_df=generation,
-        weather_df=weather)
-    
-    final_df = alignement.transform()
+        weather_df=weather
+    )
+
+    final_df = alignment.transform()
+
+    # -----------------------------------
+    # OUTPUT SUMMARY
+    # -----------------------------------
 
     print(final_df.shape)
+
     print(final_df.columns)
+
     print(final_df.head())
