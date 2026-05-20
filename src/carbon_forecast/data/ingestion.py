@@ -1,6 +1,7 @@
 import pandas as pd
 import logging
 from carbon_forecast.data.base import BaseAPIClient
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,104 @@ class GenerationMixClient(BaseAPIClient):
             df = df[df["DATETIME"] <= pd.Timestamp(end, tz="UTC")]
 
         return df
+    
+class WeatherClient(BaseAPIClient):
+
+    def __init__(self, **kwargs):
+        super().__init__(
+            base_url='https://archive-api.open-meteo.com/v1/archive',
+            **kwargs
+        )
+    
+    def _validate_date(self, date_str: str) -> None:
+        """
+        Validate date string format.
+
+        Expected format:
+            YYYY-MM-DD
+
+        Args:
+            date_str:
+                Input date string.
+
+        Raises:
+            ValueError:
+                If date format is invalid.
+        """
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(
+                f"Invalid date format: {date_str}. "
+                "Expected format: YYYY-MM-DD"
+            )
+    
+    def fetch(self, 
+              start_date: str, 
+              end_date: str,
+              cols: list[str] = None,
+              locations: dict = None
+              ):
+        
+        if cols is None:
+            cols = ["temperature_2m", "wind_speed_100m", "direct_radiation", "cloud_cover", "pressure_msl"]
+    
+        if locations is None:
+            locations = {
+                "aberdeen": [57.15, -2.09],  # Offshore wind proxy
+                "glasgow": [55.86, -4.25],   # Onshore wind / Atlantic systems
+                "london": [51.51, -0.13],    # Demand / temperature proxy
+                "exeter": [50.72, -3.53]     # Solar / southwest weather proxy
+            }
+
+        self._validate_date(start_date)
+        self._validate_date(end_date)
+
+        # Store individual location DataFrames
+        dfs = []
+
+        # Loop through each location
+        for name, coords in locations.items():
+
+            # API query parameters
+            params = {
+                "latitude": coords[0],
+                "longitude": coords[1],
+
+                # Energy-relevant weather variables
+                "hourly": ",".join(cols),
+                "start_date": start_date,
+                "end_date": end_date,
+                "timezone": "UTC"
+            }
+
+            # Execute API request using shared base method
+            data = self._make_request(self.base_url, params=params)
+
+            # Convert hourly weather data into DataFrame
+            df = pd.DataFrame(data["hourly"])
+
+            # Convert timestamps to UTC-aware datetime
+            df["time"] = pd.to_datetime(
+                df["time"],
+                utc=True
+            )
+
+            # Rename weather columns with location prefix
+            # Example:
+            # temperature_2m -> aberdeen_temperature_2m
+            df = df.rename(columns={col: f"{name}_{col}" for col in df.columns if col != "time"})
+
+            # Store location DataFrame
+            df = df.set_index('time')
+            dfs.append(df)
+
+        weather_df = pd.concat(dfs, axis=1)
+
+        return weather_df
+
+
+    
 
 
 ################################################################
@@ -275,10 +374,9 @@ if __name__ == "__main__":
 #   client = CarbonIntensityClient(retry=3, timeout=5)
 #    df = client.fetch(start="2024-01-01", end="2024-07-07")
 
-    client = GenerationMixClient()
-    df = client.fetch()
+    client = WeatherClient()
+    df = client.fetch(start_date='2023-07-23', end_date='2023-07-25')
 
     print(df.head())
     print(f"\nShape: {df.shape}")
-    print(f"Date range: {df['from'].min()} -> {df['from'].max()}")
     print(f"Columns: {df.columns.tolist()}")

@@ -53,7 +53,7 @@ class BaseAPIClient(ABC):
         # persisting TCP connections across requests
         self.session = requests.Session()
 
-    def _make_request(self, url: str) -> dict | None:
+    def _make_request(self, url: str, params: dict = None) -> dict | None:
         """
         Execute a GET request with retry and error handling.
 
@@ -82,10 +82,13 @@ class BaseAPIClient(ABC):
 
             try:
                 # Send GET request
+                
                 r = self.session.get(
                     url,
+                    params=params,
                     timeout=self.timeout
                 )
+            
 
                 # Raise exception for 4xx/5xx responses
                 r.raise_for_status()
