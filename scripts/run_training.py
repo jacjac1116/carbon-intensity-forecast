@@ -22,6 +22,8 @@ import numpy as np
 import logging
 import os
 import pandas as pd
+from carbon_forecast.evaluation.stratified import StratifiedEvaluator
+import yaml
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,22 +40,21 @@ logger = logging.getLogger(__name__)
 # join(... "data", "raw") = .../carbon-intensity-forecast/data/raw/
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
-START_DATE = "2020-01-01"
-END_DATE = "2025-12-31"
-TRAIN_RATIO = 0.8
-TARGET_COL = "actual"
+
+config_path = os.path.join(PROJECT_ROOT, 'configs', 'model', 'lgbm_24h.yaml')
+with open(config_path) as f:
+    config = yaml.safe_load(f)
+
+START_DATE = config['data']['start_date']
+END_DATE = config['data']['end_date']
+TRAIN_RATIO = config['data']['train_ratio']
+TARGET_COL = config['target_col']
 
 # Forecast horizon in half-hour periods
 # 2 = 1h, 48 = 24h, 96 = 48h
-HORIZON = 48
+HORIZON = config['horizon']
 
-LGBM_PARAMS = {
-    "n_estimators": 500,
-    "learning_rate": 0.05,
-    "max_depth": 6,
-    "n_jobs": -1,
-    "random_state": 42,
-}
+LGBM_PARAMS = config['model']['params']
 
 # Columns that are targets or metadata — not features
 DROP_COLS = [
@@ -71,7 +72,7 @@ DROP_COLS = [
 # DATA LOADING
 # -----------------------------------
 
-def load_or_fetch(name, path, fetch_fn):
+def load_or_fetch(name: str, path: str, fetch_fn: callable) -> pd.DataFrame:
     """Load from cache if available, otherwise fetch and save."""
 
     # Creates all folders needed for this path if they don't already exist
@@ -88,7 +89,8 @@ def load_or_fetch(name, path, fetch_fn):
     return df
 
 
-def fetch_all_data(start, end):
+def fetch_all_data(start: str, end: str
+                   ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame,]:
     """Fetch carbon intensity, generation mix, and weather data."""
 
     carbon = load_or_fetch(
@@ -122,7 +124,7 @@ def fetch_all_data(start, end):
 # FEATURE PREPARATION
 # -----------------------------------
 
-def prepare_features(df, horizon):
+def prepare_features(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
     """
     Prepare feature matrix for a given forecast horizon.
 
@@ -170,7 +172,7 @@ def prepare_features(df, horizon):
 # TRAIN / TEST SPLIT
 # -----------------------------------
 
-def split_data(df, train_ratio):
+def split_data(df: pd.DataFrame, train_ratio: float) -> tuple:
     """Time-ordered train/test split."""
     split_idx = int(len(df) * train_ratio)
 
@@ -193,7 +195,12 @@ def split_data(df, train_ratio):
 # EVALUATION
 # -----------------------------------
 
-def evaluate(y_test, y_pred, persistence_pred, horizon):
+def evaluate(
+        y_test: pd.Series, 
+        y_pred: np.array, 
+        persistence_pred: pd.Series, 
+        horizon: int
+        ) -> dict:
     """Print evaluation metrics against persistence baseline."""
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
@@ -262,6 +269,18 @@ def main():
     logger.info(f"\nTop 15 features:")
     for name, score in sorted_imp[:15]:
         logger.info(f"  {name}: {score}")
+
+    evaluation_df = featured_df.loc[y_test.index]
+
+    evaluator = StratifiedEvaluator(
+        df = evaluation_df,
+        y_true=y_test,
+        y_pred=y_pred
+    )
+
+    stratified_results = evaluator.report()
+    cols = ["slice", "condition", "n_sample", "mae", "mae_vs_global", "rmse", "r2_score", "flag"]
+    print(stratified_results[cols].round(2).to_string())
 
     # Save model
     os.makedirs("outputs/models", exist_ok=True)
