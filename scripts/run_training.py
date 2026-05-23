@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # -----------------------------------
 
+# Build absolute path to data cache directory:
+# __file__          = .../carbon-intensity-forecast/scripts/run_training.py
+# abspath(__file__) = ensures full path (not relative)
+# dirname() x1      = .../carbon-intensity-forecast/scripts/
+# dirname() x2      = .../carbon-intensity-forecast/         (project root)
+# join(... "data", "raw") = .../carbon-intensity-forecast/data/raw/
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
 START_DATE = "2020-01-01"
