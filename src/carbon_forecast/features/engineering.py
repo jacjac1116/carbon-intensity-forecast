@@ -26,6 +26,15 @@ class FeatureEngineer():
 
         return df
     
+    def _add_generation_lags(self, df):
+        gen_cols = ["WIND", "SOLAR", "GAS", "FOSSIL", "GENERATION", "NUCLEAR", "IMPORTS",
+                    "COAL", "HYDRO", "BIOMASS", "OTHER", "STORAGE", "LOW_CARBON", "ZERO_CARBON",
+                      "RENEWABLE"]
+        for col in gen_cols:
+            df[f"{col}_lag_1h"] = df[col].shift(2)
+            df[f"{col}_lag_24h"] = df[col].shift(48)
+        return df
+    
     def _add_rolling_features(self, df: pd.DataFrame) -> pd.DataFrame:
         
         df['rolling_24h'] = df[self.target_col].rolling(window=48).mean()
@@ -132,6 +141,7 @@ class FeatureEngineer():
         df = self._add_rolling_features(df)
         df = self._add_calendar_features(df)
         df = self._add_generation_ratios(df)
+        df = self._add_generation_lags(df)
 
         return df
 

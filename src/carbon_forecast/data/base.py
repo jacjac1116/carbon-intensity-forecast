@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 import pandas as pd
 import requests
+import logging
 
+logger = logging.getLogger(__name__)
 
 class BaseAPIClient(ABC):
     """

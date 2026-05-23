@@ -11,7 +11,10 @@ dependencies = [
     "pandas",
     "requests",
     "scikit-learn",
-    "holidays"
+    "holidays",
+    "mlflow",
+    "lightgbm",
+    "pyarrow"
 ]
 
 # Build system - how pip installs the package

@@ -459,6 +459,10 @@ class WeatherClient(BaseAPIClient):
 
             data = self._make_request(base, params=params)
 
+            if data is None:
+                logger.error(f'Failed to fetch weather for {name}')
+                continue
+
             # -----------------------------------
             # DATA TRANSFORMATION
             # -----------------------------------
