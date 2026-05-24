@@ -24,6 +24,12 @@ import os
 import pandas as pd
 from carbon_forecast.evaluation.stratified import StratifiedEvaluator
 import yaml
+import mlflow
+from carbon_forecast.evaluation.metrics import EvaluationReport
+import pickle
+import json
+from datetime import datetime
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -221,6 +227,62 @@ def evaluate(
 
 
 # -----------------------------------
+# MLFLOW
+# -----------------------------------
+
+def import_to_mlflow(model, y_true, y_pred, X_train, TARGET_COL, stratified_results, persistence_pred, HORIZON, version):
+
+    # Setup: Tell mflow where to save and what experiement I'm in
+    MLFLOW_TRACKING_URI = '/Users/luiscanteiro/Documents/Python/Codes/mlruns'
+    EXPERIMENT_NAME = 'carbon_intensity_forecasting'
+
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(EXPERIMENT_NAME)
+
+    importance = model.feature_importance
+
+    analyser = EvaluationReport(
+        y_true,
+        y_pred,
+        persistence_pred,
+        HORIZON
+    )
+    analysis = analyser.compute()
+
+    with mlflow.start_run(run_name='carbon_intensity_lgb') as parent:
+
+        with mlflow.start_run(run_name=f'{version}', nested=True):
+            mlflow.log_dict(dict(sorted(importance.items(), key= lambda x: x[1], reverse=True)), 'feature_importance.json')
+
+            stratified_results.to_csv('stratified_results.csv', index=False)
+            mlflow.log_artifact('stratified_results.csv')
+            os.remove('stratified_results.csv')
+
+            mlflow.log_metrics(analysis)
+            mlflow.log_params(config['model']['params'])
+            mlflow.log_param('horizon', HORIZON)
+            mlflow.log_param('train_ratio', TRAIN_RATIO)
+           
+            schema = {'features': X_train.columns.tolist(),
+                      'target': TARGET_COL}
+            mlflow.log_dict(schema, 'model_schema.json')
+
+            # Save model using pickle - mlflow.sklearn.log_model has version compatibility issues
+            with open('temp_model.pkl', 'wb') as f: # 'wb' write binary - saves in raw bites
+                pickle.dump(model, f)
+            mlflow.log_artifact('temp_model.pkl', f'model_{version}')
+            os.remove('temp_model.pkl')
+
+            # Save input example
+            with open('input_example.json', 'w') as f: # 'w' - write text, json is text
+                json.dump(X_train.reset_index(drop=True).iloc[:5].to_dict(), f)
+            mlflow.log_artifact('input_example.json')
+            os.remove('input_example.json')
+    
+    logger.info('Model uploaded to mlflow')
+
+
+# -----------------------------------
 # MAIN
 # -----------------------------------
 
@@ -285,6 +347,20 @@ def main():
     # Save model
     os.makedirs("outputs/models", exist_ok=True)
     model.save(f"outputs/models/lgbm_t{HORIZON}.pkl")
+
+    version = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    import_to_mlflow(
+        model=model,
+        y_true=y_test,
+        y_pred=y_pred,
+        X_train=X_train,
+        TARGET_COL=TARGET_COL,
+        stratified_results=stratified_results,
+        persistence_pred=persistence_pred,
+        HORIZON=HORIZON,
+        version=version
+    )
 
 
 if __name__ == "__main__":

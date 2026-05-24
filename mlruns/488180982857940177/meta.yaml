@@ -1,0 +1,8 @@
+artifact_location: /Users/luiscanteiro/projects/carbon-intensity-forecast/mlruns/488180982857940177
+creation_time: 1779619775635
+experiment_id: '488180982857940177'
+last_update_time: 1779619775635
+lifecycle_stage: active
+name: carbon_intensity_forecasting
+trace_location: null
+workspace: default

@@ -1,0 +1,14 @@
+artifact_uri: /Users/luiscanteiro/projects/carbon-intensity-forecast/mlruns/488180982857940177/2a98ea085084452b9f470ce1fc7d9ee3/artifacts
+end_time: 1779619776150
+entry_point_name: ''
+experiment_id: '488180982857940177'
+lifecycle_stage: active
+run_id: 2a98ea085084452b9f470ce1fc7d9ee3
+run_name: V1
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1779619776034
+status: 3
+tags: []
+user_id: luiscanteiro
