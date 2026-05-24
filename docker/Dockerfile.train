@@ -1,1 +1,25 @@
+# Start from a python base image
+FROM python:3.11-slim
 
+# Set working directory inside the container
+WORKDIR /app
+
+# Install system dependencies for LightGBM
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files into the container
+COPY pyproject.toml .
+COPY src/ src/
+COPY configs/ configs/
+COPY scripts/ scripts/
+#     ^         ^
+#     |         └── destination: /app/src/ inside the container
+#     └── source: src/ from your project folder
+
+# Install the package and dependencies
+RUN pip install --no-cache-dir -e .
+
+# Defualt command: run training
+CMD ["python", "scripts/run_training.py"]
