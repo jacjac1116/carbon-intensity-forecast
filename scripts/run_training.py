@@ -230,56 +230,257 @@ def evaluate(
 # MLFLOW
 # -----------------------------------
 
-def import_to_mlflow(model, y_true, y_pred, X_train, TARGET_COL, stratified_results, persistence_pred, HORIZON, version):
+def import_to_mlflow(
+    model,
+    y_true,
+    y_pred,
+    X_train,
+    TARGET_COL,
+    stratified_results,
+    persistence_pred,
+    HORIZON,
+    version,
+):
+    """
+    Log model artefacts, metrics, and metadata to MLflow.
 
-    # Setup: Tell mflow where to save and what experiement I'm in
-    MLFLOW_TRACKING_URI = '/Users/luiscanteiro/Documents/Python/Codes/mlruns'
-    EXPERIMENT_NAME = 'carbon_intensity_forecasting'
+    This function stores:
+        - evaluation metrics
+        - feature importance
+        - stratified evaluation results
+        - model schema
+        - trained model artefact
+        - example model inputs
 
+    Using MLflow allows:
+        - experiment tracking
+        - model reproducibility
+        - metric comparison across runs
+        - versioned model storage
+
+    Args:
+        model:
+            Trained forecasting model.
+
+        y_true:
+            Ground truth target values.
+
+        y_pred:
+            Model predictions.
+
+        X_train:
+            Training feature matrix.
+
+        TARGET_COL:
+            Name of target column.
+
+        stratified_results:
+            DataFrame containing slice-based evaluation results.
+
+        persistence_pred:
+            Persistence baseline predictions.
+
+        HORIZON:
+            Forecast horizon in half-hour periods.
+
+        version:
+            Model version identifier.
+    """
+
+    # -----------------------------------
+    # MLFLOW CONFIGURATION
+    # -----------------------------------
+
+    # Local MLflow tracking directory
+    MLFLOW_TRACKING_URI = (
+        "/Users/luiscanteiro/Documents/Python/Codes/mlruns"
+    )
+
+    # Experiment group name inside MLflow UI
+    EXPERIMENT_NAME = "carbon_intensity_forecasting"
+
+    # Tell MLflow where runs should be stored
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+
+    # Set active experiment
     mlflow.set_experiment(EXPERIMENT_NAME)
+
+    # -----------------------------------
+    # FEATURE IMPORTANCE
+    # -----------------------------------
 
     importance = model.feature_importance
 
-    analyser = EvaluationReport(
-        y_true,
-        y_pred,
-        persistence_pred,
-        HORIZON
+    # Sort features from most -> least important
+    importance = dict(
+        sorted(
+            importance.items(),
+            key=lambda x: x[1],
+            reverse=True,
+        )
     )
+
+    # -----------------------------------
+    # EVALUATION METRICS
+    # -----------------------------------
+
+    analyser = EvaluationReport(
+        y_true=y_true,
+        y_pred=y_pred,
+        baseline_pred=persistence_pred,
+        horizon=HORIZON,
+    )
+
     analysis = analyser.compute()
 
-    with mlflow.start_run(run_name='carbon_intensity_lgb') as parent:
+    # -----------------------------------
+    # START PARENT RUN
+    # -----------------------------------
 
-        with mlflow.start_run(run_name=f'{version}', nested=True):
-            mlflow.log_dict(dict(sorted(importance.items(), key= lambda x: x[1], reverse=True)), 'feature_importance.json')
+    # Parent run groups together
+    # multiple model versions / experiments
+    with mlflow.start_run(
+        run_name="carbon_intensity_lgb"
+    ) as parent:
 
-            stratified_results.to_csv('stratified_results.csv', index=False)
-            mlflow.log_artifact('stratified_results.csv')
-            os.remove('stratified_results.csv')
+        # -----------------------------------
+        # START NESTED MODEL RUN
+        # -----------------------------------
+
+        # Nested runs are useful for:
+        # - hyperparameter tuning
+        # - model versioning
+        # - comparing forecast horizons
+        with mlflow.start_run(
+            run_name=f"{version}",
+            nested=True,
+        ):
+
+            # -----------------------------------
+            # LOG FEATURE IMPORTANCE
+            # -----------------------------------
+
+            mlflow.log_dict(
+                importance,
+                "feature_importance.json",
+            )
+
+            # -----------------------------------
+            # LOG STRATIFIED EVALUATION
+            # -----------------------------------
+
+            # Save locally first because
+            # MLflow logs files as artefacts
+            stratified_results.to_csv(
+                "stratified_results.csv",
+                index=False,
+            )
+
+            mlflow.log_artifact(
+                "stratified_results.csv"
+            )
+
+            # Remove temporary local file
+            os.remove("stratified_results.csv")
+
+            # -----------------------------------
+            # LOG METRICS
+            # -----------------------------------
 
             mlflow.log_metrics(analysis)
-            mlflow.log_params(config['model']['params'])
-            mlflow.log_param('horizon', HORIZON)
-            mlflow.log_param('train_ratio', TRAIN_RATIO)
-           
-            schema = {'features': X_train.columns.tolist(),
-                      'target': TARGET_COL}
-            mlflow.log_dict(schema, 'model_schema.json')
 
-            # Save model using pickle - mlflow.sklearn.log_model has version compatibility issues
-            with open('temp_model.pkl', 'wb') as f: # 'wb' write binary - saves in raw bites
+            # -----------------------------------
+            # LOG MODEL PARAMETERS
+            # -----------------------------------
+
+            mlflow.log_params(
+                config["model"]["params"]
+            )
+
+            mlflow.log_param(
+                "horizon",
+                HORIZON,
+            )
+
+            mlflow.log_param(
+                "train_ratio",
+                TRAIN_RATIO,
+            )
+
+            # -----------------------------------
+            # LOG MODEL SCHEMA
+            # -----------------------------------
+
+            # Storing schema helps:
+            # - inference reproducibility
+            # - deployment validation
+            # - feature tracking
+            schema = {
+                "features": X_train.columns.tolist(),
+                "target": TARGET_COL,
+            }
+
+            mlflow.log_dict(
+                schema,
+                "model_schema.json",
+            )
+
+            # -----------------------------------
+            # LOG SERIALISED MODEL
+            # -----------------------------------
+
+            # Using pickle instead of
+            # mlflow.sklearn.log_model()
+            #
+            # Reason:
+            # sklearn/mlflow version
+            # compatibility issues
+            with open(
+                "temp_model.pkl",
+                "wb",  # write binary
+            ) as f:
+
                 pickle.dump(model, f)
-            mlflow.log_artifact('temp_model.pkl', f'model_{version}')
-            os.remove('temp_model.pkl')
 
-            # Save input example
-            with open('input_example.json', 'w') as f: # 'w' - write text, json is text
-                json.dump(X_train.reset_index(drop=True).iloc[:5].to_dict(), f)
-            mlflow.log_artifact('input_example.json')
-            os.remove('input_example.json')
-    
-    logger.info('Model uploaded to mlflow')
+            mlflow.log_artifact(
+                "temp_model.pkl",
+                f"model_{version}",
+            )
+
+            # Remove temporary local file
+            os.remove("temp_model.pkl")
+
+            # -----------------------------------
+            # LOG INPUT EXAMPLE
+            # -----------------------------------
+
+            # Useful for:
+            # - deployment testing
+            # - model serving validation
+            # - API examples
+            with open(
+                "input_example.json",
+                "w",  # write text
+            ) as f:
+
+                json.dump(
+                    X_train
+                    .reset_index(drop=True)
+                    .iloc[:5]
+                    .to_dict(),
+                    f,
+                )
+
+            mlflow.log_artifact(
+                "input_example.json"
+            )
+
+            # Remove temporary local file
+            os.remove("input_example.json")
+
+    logger.info(
+        "Model successfully uploaded to MLflow"
+    )
 
 
 # -----------------------------------
