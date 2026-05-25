@@ -29,6 +29,7 @@ from carbon_forecast.evaluation.metrics import EvaluationReport
 import pickle
 import json
 from datetime import datetime
+from carbon_forecast.evaluation.failure import FailureDetector
 
 
 logging.basicConfig(level=logging.INFO)
@@ -551,17 +552,27 @@ def main():
 
     version = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    import_to_mlflow(
-        model=model,
+    #import_to_mlflow(
+    #    model=model,
+    #    y_true=y_test,
+    #    y_pred=y_pred,
+    #    X_train=X_train,
+    #    TARGET_COL=TARGET_COL,
+    #    stratified_results=stratified_results,
+    #    persistence_pred=persistence_pred,
+    #    HORIZON=HORIZON,
+    #    version=version
+    #)
+    
+    failure = FailureDetector(
         y_true=y_test,
         y_pred=y_pred,
-        X_train=X_train,
-        TARGET_COL=TARGET_COL,
-        stratified_results=stratified_results,
-        persistence_pred=persistence_pred,
-        HORIZON=HORIZON,
-        version=version
+        df = evaluation_df
     )
+
+    failure_df = failure.report()
+
+    print(failure_df.head(5))
 
 
 if __name__ == "__main__":
