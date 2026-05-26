@@ -15,7 +15,9 @@ dependencies = [
     "mlflow",
     "lightgbm",
     "pyarrow",
-    "pyyaml"
+    "pyyaml",
+    "anthropic",
+    "google-genai"
 ]
 
 # Build system - how pip installs the package

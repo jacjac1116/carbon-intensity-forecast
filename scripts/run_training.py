@@ -30,6 +30,8 @@ import pickle
 import json
 from datetime import datetime
 from carbon_forecast.evaluation.failure import FailureDetector
+from carbon_forecast.agent.analyst_claude import FailureAnalyst
+from carbon_forecast.agent.tools import AnalysisTools
 
 
 logging.basicConfig(level=logging.INFO)
@@ -572,7 +574,45 @@ def main():
 
     failure_df = failure.report()
 
-    print(failure_df.head(5))
+    # Set up agent tools with test data
+    analysis_tools = AnalysisTools(
+        y_true=y_test,
+        y_pred=y_pred,
+        df=evaluation_df
+    )
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.warning("GEMINI_API_KEY not set. Run: export GEMINI_API_KEY='your-key'")
+        api_key='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'
+
+    # Run agent
+    analyst = FailureAnalyst(
+        tools=analysis_tools,
+        api_key = api_key,
+    )
+
+    # Send only top 10 failure episodes, not all 496
+    failure_report = failure_df.head(10).to_dict(orient="records")
+
+    # Send only flagged or top 15 stratified results
+    stratified_report = stratified_results.head(15).to_dict(orient="records")
+
+    # Send only top 20 features, not all 65
+    top_features = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True)[:20])
+
+    agent_report = analyst.analyse(
+        failure_report=failure_report,
+        stratified_report=stratified_report,
+        feature_importances = {k: int(v) for k, v in importance.items()},
+        available_features=top_features
+    )
+
+    # Save the agent's analysis
+    with open(os.path.join(PROJECT_ROOT, "outputs", "reports", "agent_analysis.json"), "w") as f:
+        json.dump(agent_report, f, indent=2)
+
+    logger.info("Agent analysis saved to outputs/reports/agent_analysis.json")
 
 
 if __name__ == "__main__":
