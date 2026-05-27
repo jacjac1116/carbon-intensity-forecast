@@ -6,6 +6,7 @@ from sklearn.metrics import (
 )
 import numpy as np
 import logging
+import pandas as pd
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class EvaluationReport():
     - cleaner training pipelines
     """
 
-    def __init__(self, y_true, y_pred, baseline_pred=None, horizon=None):
+    def __init__(self, y_true, y_pred, baseline_pred=None, horizon=None, quantile_preds: pd.DataFrame = None):
 
         """
         Initialise evaluation report.
@@ -55,6 +56,7 @@ class EvaluationReport():
         self.y_pred = y_pred
         self.baseline_pred = baseline_pred
         self.horizon = horizon
+        self.quantile_preds = quantile_preds
     
     def compute(self) -> dict:
         """
@@ -66,6 +68,22 @@ class EvaluationReport():
             'rmse': np.sqrt(mean_squared_error(self.y_true, self.y_pred)),
             'r2_score': r2_score(self.y_true, self.y_pred)
         }
+
+        if self.quantile_preds is not None:
+            lower = self.quantile_preds['q10']
+            upper = self.quantile_preds['q90']
+
+            # Prediction Interval Coverage Probability. Target: ~80% for 10th-90th
+            metrics['picp'] = np.mean((self.y_true >= lower) & (self.y_true <= upper))
+            
+            # Prediction Interval Normalised Average Width. Lower is better (sharper intervals)
+            metrics['pinaw'] = np.mean(upper-lower) / (self.y_true.max() - self.y_true.min())
+
+            for col in self.quantile_preds.columns:
+                q = int(col.replace('q', '')) / 100
+                metrics[f"pinball_{col}"] = mean_pinball_loss(
+                    self.y_true, self.quantile_preds[col], alpha=q
+                )
 
         if self.baseline_pred is not None:
             metrics['persistence_mae'] = mean_absolute_error(self.y_true, self.baseline_pred)

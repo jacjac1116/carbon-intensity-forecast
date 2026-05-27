@@ -14,7 +14,8 @@ class StratifiedEvaluator:
                  y_pred: np.array,
                  params: list[str]= None,
                  HOUR_BINS: dict = None,
-                 FEATURE_BINS: dict = None):
+                 FEATURE_BINS: dict = None,
+                 quantile_preds: list = None):
 
         self.df = df
         self.y_true = y_true
@@ -44,6 +45,7 @@ class StratifiedEvaluator:
                 "extreme": (0.90, 1.0),
             }
         self.FEATURE_BINS = FEATURE_BINS
+        self.quantile_preds = quantile_preds
 
 
     def _slicer(self, param):
@@ -98,9 +100,16 @@ class StratifiedEvaluator:
                 if len(y_true_sliced) == 0:
                     logger.warning(f'Skipping empty slice: {param}/{slice_name}')
                     continue
+
+                # Slice quantile predictions if available
+                q_sliced  = None
+                if self.quantile_preds is not None:
+                    q_sliced = self.quantile_preds.loc[mask]
                 
                 evaluator = EvaluationReport(
-                    y_true=y_true_sliced, y_pred=y_pred_sliced)
+                    y_true=y_true_sliced, 
+                    y_pred=y_pred_sliced,
+                    quantile_preds=q_sliced)
                 analysis = evaluator.compute()
 
                 analysis['slice'] = param
@@ -117,7 +126,7 @@ class StratifiedEvaluator:
 
         results = self.analyse()
 
-        evaluator = EvaluationReport(y_true=self.y_true, y_pred=self.y_pred)
+        evaluator = EvaluationReport(y_true=self.y_true, y_pred=self.y_pred, quantile_preds=self.quantile_preds)
         global_metrics = evaluator.compute()
 
         for metric in metrics:

@@ -6,6 +6,7 @@ import json
 from carbon_forecast.agent.prompt import SYSTEM_PROMPT
 from carbon_forecast.agent.tools_schema import TOOLS
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class FailureAnalyst:
         self.tools = tools
         self.client = anthropic.Anthropic(api_key=api_key)
 
-    def analyse (self, failure_report: dict, stratified_report: dict, feature_importances: dict, available_features: list[str]) -> dict:
+    def analyse (self, failure_report: dict, stratified_report: dict, feature_importances: dict, available_features: list[str], quantile_metrics: dict) -> dict:
         """
         Run the full analysis loop
         """
@@ -36,6 +37,7 @@ class FailureAnalyst:
         Stratified evaluation: {json.dumps(stratified_report, default=str)}
         Feature importances: {json.dumps(feature_importances, default=str)}
         Available features for investigation: {available_features}
+        f"## Quantile Model Metrics\n{json.dumps(quantile_metrics, indent=2, default=str)}\n\n"
         """
 
         # Map tool names to actual functions
@@ -100,11 +102,17 @@ class FailureAnalyst:
                         final_text += block.text
                 
                 # Parse JSON from Claude's response
+                json_match = re.search(r'```json\s*(.*?)\s*```', final_text, re.DOTALL)
+                if json_match:
+                    clean_text = json_match.group(1).strip()
+                else:
+                    clean_text = final_text.strip()
+                
                 try:
-                    analysis = json.loads(final_text)
+                    analysis = json.loads(clean_text)
                 except json.JSONDecodeError:
-                    logger.warning('Could not parse Json, returning raw text')
-                    analysis = {'raw_response': final_text}
+                    logger.warning("Could not parse JSON, returning raw text")
+                    analysis = {"raw_response": final_text}
 
                 return analysis
 

@@ -220,7 +220,7 @@ on a production forecasting system.
 OUTPUT FORMAT
 ======================================================================
 
-Return your final response as VALID JSON using this schema:
+Return your whole final response as VALID JSON using this schema:
 
 {
     "hypotheses": [

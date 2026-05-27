@@ -32,6 +32,8 @@ from datetime import datetime
 from carbon_forecast.evaluation.failure import FailureDetector
 from carbon_forecast.agent.analyst_claude import FailureAnalyst
 from carbon_forecast.agent.tools import AnalysisTools
+from carbon_forecast.models.quantile import QuantileForecaster
+from sklearn.model_selection import TimeSeriesSplit
 
 
 logging.basicConfig(level=logging.INFO)
@@ -227,6 +229,32 @@ def evaluate(
     logger.info(f"Persistence RMSE:{persistence_rmse:.2f}")
 
     return {"mae": mae, "rmse": rmse, "persistence_mae": persistence_mae}
+
+def walk_forward_cv(df: pd.DataFrame) -> pd.DataFrame:
+
+    results = []
+    years = sorted(df.index.year.unique())
+
+    for test_year in years[3:]: # need at least 3 years to train
+        train = df[df.index.year < test_year]
+        test = df[df.index.year == test_year]
+
+        X_train = train.drop(columns=['target', TARGET_COL])
+        y_train = train["target"]
+        X_test = test.drop(columns=["target", TARGET_COL])
+        y_test = test["target"]
+        
+        model = LGBMForecaster(LGBM_PARAMS)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        
+        mae = mean_absolute_error(y_test, y_pred)
+        results.append({"test_year": test_year, "mae": mae, "n_samples": len(y_test)})
+        logger.info(f"Year {test_year}: MAE = {mae:.2f} ({len(y_test):,} samples)")
+
+    results_df = pd.DataFrame(results)
+    logger.info(f"\nMean MAE across folds: {results_df['mae'].mean():.2f} ± {results_df['mae'].std():.2f}")
+
 
 
 # -----------------------------------
@@ -491,128 +519,45 @@ def import_to_mlflow(
 # -----------------------------------
 
 def main():
-    # Fetch data
+    # 1. Load data
     carbon, gen, weather = fetch_all_data(START_DATE, END_DATE)
-
-    # Align
-    alignment = AlignmentPipeline(
-        carbon_df=carbon,
-        gen_df=gen,
-        weather_df=weather,
-    )
-    aligned_df = alignment.transform()
-
-    # Engineer features
-    engineer = FeatureEngineer(target_col=TARGET_COL)
-    featured_df = engineer.transform(aligned_df)
-
-    # Prepare for training
+    
+    # 2. Align
+    aligned_df = AlignmentPipeline(carbon, gen, weather).transform()
+    
+    # 3. Features
+    featured_df = FeatureEngineer(target_col=TARGET_COL).transform(aligned_df)
     model_df = prepare_features(featured_df, horizon=HORIZON)
-
-    # Split
-    X_train, X_test, y_train, y_test, persistence_pred = split_data(
-        model_df, TRAIN_RATIO
-    )
-
-    logger.info(f"Training samples: {len(X_train):,}")
-    logger.info(f"Test samples:     {len(X_test):,}")
-    logger.info(f"Features:         {X_train.shape[1]}")
-
-    # Train
+    
+    # 4. Walk-forward CV
+    cv_results = walk_forward_cv(model_df)
+    
+    # 5. Final model (trained on all but last year, tested on last year)
+    X_train, X_test, y_train, y_test, persistence_pred = split_data(model_df, TRAIN_RATIO)
+    
     model = LGBMForecaster(LGBM_PARAMS)
     model.fit(X_train, y_train)
-
-    # Predict
     y_pred = model.predict(X_test)
-
-    # Evaluate
-    results = evaluate(y_test, y_pred, persistence_pred, HORIZON)
-
-    # Feature importance
-    importance = model.feature_importance
-    sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)
-
-    logger.info(f"\nTop 15 features:")
-    for name, score in sorted_imp[:15]:
-        logger.info(f"  {name}: {score}")
-
-    evaluation_df = featured_df.loc[y_test.index]
-
-    evaluator = StratifiedEvaluator(
-        df = evaluation_df,
-        y_true=y_test,
-        y_pred=y_pred
-    )
-
-    stratified_results = evaluator.report()
-    cols = ["slice", "condition", "n_sample", "mae", "mae_vs_global", "rmse", "r2_score", "flag"]
-    print(stratified_results[cols].round(2).to_string())
-
-    # Save model
-    os.makedirs("outputs/models", exist_ok=True)
-    model.save(f"outputs/models/lgbm_t{HORIZON}.pkl")
-
-    version = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-    #import_to_mlflow(
-    #    model=model,
-    #    y_true=y_test,
-    #    y_pred=y_pred,
-    #    X_train=X_train,
-    #    TARGET_COL=TARGET_COL,
-    #    stratified_results=stratified_results,
-    #    persistence_pred=persistence_pred,
-    #    HORIZON=HORIZON,
-    #    version=version
-    #)
     
-    failure = FailureDetector(
-        y_true=y_test,
-        y_pred=y_pred,
-        df = evaluation_df
-    )
-
+    quantile_model = QuantileForecaster(LGBM_PARAMS)
+    quantile_model.fit(X_train, y_train)
+    quantile_preds = quantile_model.predict(X_test)
+    
+    # 6. Evaluate
+    evaluation_df = featured_df.loc[y_test.index]
+    results = evaluate(y_test, y_pred, persistence_pred, HORIZON)
+    
+    stratified = StratifiedEvaluator(evaluation_df, y_test, y_pred, quantile_preds=quantile_preds)
+    stratified_results = stratified.report()
+    
+    failure = FailureDetector(y_test, y_pred, evaluation_df)
     failure_df = failure.report()
-
-    # Set up agent tools with test data
-    analysis_tools = AnalysisTools(
-        y_true=y_test,
-        y_pred=y_pred,
-        df=evaluation_df
-    )
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        logger.warning("GEMINI_API_KEY not set. Run: export GEMINI_API_KEY='your-key'")
-        api_key='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'
-
-    # Run agent
-    analyst = FailureAnalyst(
-        tools=analysis_tools,
-        api_key = api_key,
-    )
-
-    # Send only top 10 failure episodes, not all 496
-    failure_report = failure_df.head(10).to_dict(orient="records")
-
-    # Send only flagged or top 15 stratified results
-    stratified_report = stratified_results.head(15).to_dict(orient="records")
-
-    # Send only top 20 features, not all 65
-    top_features = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True)[:20])
-
-    agent_report = analyst.analyse(
-        failure_report=failure_report,
-        stratified_report=stratified_report,
-        feature_importances = {k: int(v) for k, v in importance.items()},
-        available_features=top_features
-    )
-
-    # Save the agent's analysis
-    with open(os.path.join(PROJECT_ROOT, "outputs", "reports", "agent_analysis.json"), "w") as f:
-        json.dump(agent_report, f, indent=2)
-
-    logger.info("Agent analysis saved to outputs/reports/agent_analysis.json")
+    
+    # 7. Save everything
+    model.save(os.path.join(PROJECT_ROOT, f"outputs/models/lgbm_t{HORIZON}.pkl"))
+    # Save predictions for agent script to use later
+    pd.DataFrame({"y_true": y_test, "y_pred": y_pred}).to_parquet(
+        os.path.join(PROJECT_ROOT, "outputs/predictions/latest.parquet"))
 
 
 if __name__ == "__main__":
