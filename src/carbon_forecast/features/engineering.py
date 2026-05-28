@@ -35,7 +35,7 @@ class FeatureEngineer():
             df[f"{col}_lag_24h"] = df[col].shift(48)
         return df
     
-    def _add_rolling_features(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _add_rolling_features(self, df: pd.DataFrame, ) -> pd.DataFrame:
         
         df['rolling_24h'] = df[self.target_col].rolling(window=48).mean()
         df['rolling_24h_std'] = df[self.target_col].rolling(window=48).std()

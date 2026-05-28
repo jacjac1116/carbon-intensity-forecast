@@ -17,7 +17,8 @@ dependencies = [
     "pyarrow",
     "pyyaml",
     "anthropic",
-    "google-genai"
+    "google-genai",
+    "pytest"
 ]
 
 # Build system - how pip installs the package
