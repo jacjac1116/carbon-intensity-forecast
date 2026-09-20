@@ -18,7 +18,9 @@ dependencies = [
     "pyyaml",
     "anthropic",
     "google-genai",
-    "pytest"
+    "pytest",
+    "pyprojroot",
+    "google-cloud-bigquery",
 ]
 
 # Build system - how pip installs the package

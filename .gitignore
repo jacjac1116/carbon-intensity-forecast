@@ -66,7 +66,6 @@ data/processed/*
 outputs/reports/*
 outputs/plots/*
 outputs/predictions/*
-outputs/models/*
 
 # Notebooks
 .ipynb_checkpoints/
@@ -84,3 +83,4 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+.DS_Store

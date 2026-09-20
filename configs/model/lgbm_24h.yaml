@@ -14,3 +14,4 @@ data:
 
 horizon: 48
 target_col: actual
+lookback_days: 60

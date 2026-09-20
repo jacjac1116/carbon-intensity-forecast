@@ -68,12 +68,6 @@ class FailureDetector:
         elif temp_val > temp_q75:
             conditions.append(f"Hot ({temp_val:.1f}\u00b0C)")
 
-        # Demand
-        demand_q75 = self.df["GENERATION"].quantile(0.75)
-
-        if summary["avg_demand"] > demand_q75:
-            conditions.append("High demand")
-
         # Time
         hour = summary["time_of_day"]
 
@@ -115,7 +109,6 @@ class FailureDetector:
                 "avg_wind_gw": episode_features["glasgow_wind_speed_100m"].mean(),
                 "avg_pressure": episode_features["aberdeen_pressure_msl"].mean(),
                 "avg_solar": episode_features["exeter_direct_radiation"].mean(),
-                "avg_demand": episode_features["GENERATION"].mean(),
                 "avg_carbon_intensity": episode_features["actual"].mean(),
                 "time_of_day": episode.index[len(episode) // 2].hour,
                 "month": episode.index[len(episode) // 2].month,
@@ -154,9 +147,3 @@ class FailureDetector:
         logger.info(f"\n{'='*60}")
 
         return df
-
-        
-
-
-
-

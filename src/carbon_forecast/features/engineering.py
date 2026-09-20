@@ -2,12 +2,6 @@ import pandas as pd
 import logging
 import numpy as np
 import holidays
-from carbon_forecast.data.alignment import AlignmentPipeline
-from carbon_forecast.data.ingestion import (
-    CarbonIntensityClient,
-    GenerationMixClient,
-    WeatherClient,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +18,6 @@ class FeatureEngineer():
         df['lag_48h'] = df[self.target_col].shift(2*48)
         df['lag_1w'] = df[self.target_col].shift(2*24*7)
 
-        return df
-    
-    def _add_generation_lags(self, df):
-        gen_cols = ["WIND", "SOLAR", "GAS", "FOSSIL", "GENERATION", "NUCLEAR", "IMPORTS",
-                    "COAL", "HYDRO", "BIOMASS", "OTHER", "STORAGE", "LOW_CARBON", "ZERO_CARBON",
-                      "RENEWABLE"]
-        for col in gen_cols:
-            df[f"{col}_lag_1h"] = df[col].shift(2)
-            df[f"{col}_lag_24h"] = df[col].shift(48)
         return df
     
     def _add_rolling_features(self, df: pd.DataFrame, ) -> pd.DataFrame:
@@ -91,6 +76,11 @@ class FeatureEngineer():
         # multicollinearity is a catastrophic issue for models as they can become unstable
         # and have high variance in their predictions, especially when extrapolating beyond
         # the range of the training data, which is a key requirement for this project
+
+        # pd.Categorical declares all four seasons up front so get_dummies emits the
+        # same columns regardless of the window. Without it, a short serving window
+        # containing one season produces fewer columns than training did, and the
+        # model rejects the frame.
         dummy_holiday = pd.get_dummies(df['holiday_type'], prefix='holiday', drop_first=False)
         df = pd.concat([df, dummy_holiday], axis=1)
 
@@ -99,6 +89,8 @@ class FeatureEngineer():
                                          3:'spring', 4:'spring', 5:'spring',
                                            6:'summer', 7:'summer', 8:'summer',
                                              9:'autumn', 10:'autumn', 11:'autumn'})
+        
+        df['season'] = pd.Categorical(df['season'], categories=['autumn', 'spring', 'summer', 'winter'])
         
         # drop_first is set to True to avoid multicollinearity, as the 
         # season categories are mutually exclusive and collectively exhaustive, 
@@ -128,94 +120,55 @@ class FeatureEngineer():
 
         return df
     
-    def _add_generation_ratios(self, df: pd.DataFrame) -> pd.DataFrame:
-        df["wind_share"] = df["WIND"] / df["GENERATION"]
-        df["solar_share"] = df["SOLAR"] / df["GENERATION"]
-        df["fossil_share"] = df["FOSSIL"] / df["GENERATION"]
-        df["renewable_share"] = df["RENEWABLE"] / df["GENERATION"]
-        return df
-    
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
 
         df = self._add_lag_features(df)
         df = self._add_rolling_features(df)
         df = self._add_calendar_features(df)
-        df = self._add_generation_ratios(df)
-        df = self._add_generation_lags(df)
 
         return df
+    
 
-if __name__ == '__main__':
-    # Configure logging
-    logging.basicConfig(level=logging.INFO)
+def shape_features(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
+    """
+    Prepare feature matrix for a given forecast horizon.
 
-    # -----------------------------------
-    # DATE RANGE
-    # -----------------------------------
+    Steps:
+        1. Shift forecast weather to align with target time
+        2. Remove non-feature columns
+        3. Remove actual weather (only forecasts available at inference)
+    """
 
-    start = "2021-01-01"
-    end = "2021-12-31"
+    # Columns that are targets or metadata — not features
+    DROP_COLS = [
+        "to", "forecast", "index",
+    ]
 
-    # -----------------------------------
-    # FETCH CARBON INTENSITY DATA
-    # -----------------------------------
+    df = df.copy()
 
-    carbon_client = CarbonIntensityClient()
+    # Shift forecast weather to align with target time
+    fcst_cols = [c for c in df.columns if "_fcst_" in c]
+    for col in fcst_cols:
+        df[f"{col}_target"] = df[col].shift(-horizon)
 
-    carbon = carbon_client.fetch(
-        start=start,
-        end=end
-    )
+    # Drop columns that shouldn't be features
+    cols_to_drop = [c for c in DROP_COLS if c in df.columns]
+    df = df.drop(columns=cols_to_drop)
 
-    # -----------------------------------
-    # FETCH GENERATION MIX DATA
-    # -----------------------------------
+    # Drop raw forecast weather (keep only target-aligned versions)
+    df = df.drop(columns=fcst_cols)
 
-    generation_client = GenerationMixClient()
+    # Drop actual weather (not available at inference time)
+    actual_weather = [
+        c for c in df.columns
+        if any(loc in c for loc in ["aberdeen", "glasgow", "london", "exeter"])
+        and "_fcst_" not in c
+        and "lag" not in c
+        and "rolling" not in c
+    ]
+    df = df.drop(columns=actual_weather)
 
-    generation = generation_client.fetch()
+    # Drop rows with NaN features
+    df = df.dropna()
 
-    # -----------------------------------
-    # FETCH WEATHER DATA
-    # -----------------------------------
-
-    weather_client = WeatherClient()
-
-    weather = weather_client.fetch(
-        start_date=start,
-        end_date=end
-    )
-
-    weather_fcst = weather_client.fetch(
-        start_date=start,
-        end_date=end,
-        forecast=True
-    )
-
-    weather_df = weather.join(weather_fcst)
-
-    # -----------------------------------
-    # ALIGN DATASETS
-    # -----------------------------------
-
-    alignment = AlignmentPipeline(
-        carbon_df=carbon,
-        gen_df=generation,
-        weather_df=weather_df
-    )
-
-    final_df = alignment.transform()
-
-    # -----------------------------------
-    # ADD FEATURES
-    # -----------------------------------
-
-    engineer = FeatureEngineer(target_col='actual')
-
-    final_df = engineer.transform(final_df)
-
-    print(final_df.shape)
-
-    print(final_df.columns)
-
-    print(final_df.head())
+    return df

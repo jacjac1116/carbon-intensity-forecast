@@ -2,7 +2,6 @@ import pandas as pd
 import logging
 from carbon_forecast.data.ingestion import (
     CarbonIntensityClient,
-    GenerationMixClient,
     WeatherClient,
 )
 
@@ -18,14 +17,12 @@ class AlignmentPipeline:
 
     Datasets:
     - Carbon intensity data
-    - Generation mix data
     - Weather data
     """
 
     def __init__(
         self,
         carbon_df: pd.DataFrame,
-        gen_df: pd.DataFrame,
         weather_df: pd.DataFrame,
     ):
         """
@@ -35,15 +32,11 @@ class AlignmentPipeline:
             carbon_df:
                 Carbon intensity dataset.
 
-            gen_df:
-                Electricity generation mix dataset.
-
             weather_df:
                 Historical weather dataset.
         """
 
         self.carbon_df = carbon_df
-        self.gen_df = gen_df
         self.weather_df = weather_df
     
     def _align(self, dfs: dict) -> pd.DataFrame:
@@ -55,7 +48,7 @@ class AlignmentPipeline:
         - Detects timestamp gaps
         - Detects duplicate timestamps
         - Reports alignment diagnostics
-        - Performs inner join on aligned timestamps
+        - Performs outer join on aligned timestamps
 
         Returns:
             pd.DataFrame:
@@ -95,22 +88,14 @@ class AlignmentPipeline:
             # Example:
             # 00:00 -> 00:30 = 30 mins
             # 00:30 -> 02:00 = 90 mins (gap)
-            freq = (
-                df.index
-                .to_series()
-                .diff()
-                .dropna()
-            )
+            freq = (df.index.to_series() .diff().dropna())
 
             # Find intervals that are not 30 minutes
             gaps = freq[freq != expected]
 
             if not gaps.empty:
 
-                logger.warning(
-                    f"{name}: "
-                    f"{len(gaps)} irregular intervals detected"
-                )
+                logger.warning( f"{name}: "f"{len(gaps)} irregular intervals detected")
 
                 # -----------------------------------
                 # MISSING TIMESTAMP DETECTION
@@ -124,19 +109,14 @@ class AlignmentPipeline:
                 )
 
                 # Detect missing timestamps
-                missing_timesteps = (
-                    expected_index
-                    .difference(df.index)
-                )
+                missing_timesteps = (expected_index.difference(df.index))
 
                 logger.warning(
                     f"{name}: Missing timestamps detected:\n"
                     f"{missing_timesteps}"
                 )
 
-                logger.warning(
-                    f"{name}: Largest gap = {gaps.max()}"
-                )
+                logger.warning(f"{name}: Largest gap = {gaps.max()}")
             
             # -----------------------------------
             # BASIC DATASET SUMMARY
@@ -153,22 +133,20 @@ class AlignmentPipeline:
         # -----------------------------------
 
         start = max(df.index.min() for df in dfs.values())
-        end = min(df.index.max() for df in dfs.values())
+        
 
         logger.info(
-            f'Common alignment window: '
-            f'{start} -> {end}'
+            f'Common starting alignment window: '
+            f'{start}'
         )
 
         # -----------------------------------
         # TRIM TO COMMON WINDOW
         # -----------------------------------
 
-        carbon = self.carbon_df.loc[start:end]
+        carbon = self.carbon_df.loc[start:]
 
-        generation = self.gen_df.loc[start:end]
-
-        weather = self.weather_df.loc[start:end]
+        weather = self.weather_df.loc[start:]
 
         # -----------------------------------
         # REPORT ROW COUNTS BEFORE MERGE
@@ -177,7 +155,6 @@ class AlignmentPipeline:
         logger.info(
             f"Rows before merge | "
             f"carbon={len(carbon):,} | "
-            f"generation={len(generation):,} | "
             f"weather={len(weather):,}"
         )
 
@@ -185,14 +162,9 @@ class AlignmentPipeline:
         # MERGE DATASETS
         # -----------------------------------
 
-        # Use inner joins to keep only timestamps
-        # present in all datasets
+        # Use outer joins to keep forecast values
 
-        merged = (
-            carbon
-            .join(generation, how="inner")
-            .join(weather, how="inner")
-        )
+        merged = carbon.join(weather, how="outer")
 
         # -----------------------------------
         # REPORT FINAL ALIGNMENT
@@ -203,16 +175,19 @@ class AlignmentPipeline:
             f'{len(merged):,} rows'
         )
 
-        rows_lost = min(
-            len(carbon),
-            len(generation),
-            len(weather)
-        ) - len(merged)
+        extra_weather_rows = len(merged) - len(carbon)
+        extra_carbon_rows = len(merged) - len(weather)
 
-        if rows_lost > 0:
+        if extra_weather_rows > 0:
 
             logger.warning(
-                f"{rows_lost:,} timestamps lost during alignment."
+                f"{extra_weather_rows:,} additional timestamps in weather compared to carbon."
+            )
+        
+        if extra_carbon_rows > 0:
+
+            logger.warning(
+                f"{extra_carbon_rows:,} additional timestamps in carbon compared to weather."
             )
 
         return merged
@@ -247,13 +222,6 @@ class AlignmentPipeline:
             .set_index("datetime")
         )
 
-        # Generation dataset:
-        # "DATETIME" -> "datetime"
-        self.gen_df = (
-            self.gen_df
-            .rename(columns={"DATETIME": "datetime"})
-            .set_index("datetime")
-        )
 
         # Weather dataset already uses datetime index
         self.weather_df.index.name = "datetime"
@@ -277,7 +245,6 @@ class AlignmentPipeline:
 
         dfs = {
             "carbon": self.carbon_df,
-            "generation": self.gen_df,
             "weather": self.weather_df
         }
 
@@ -307,16 +274,9 @@ if __name__ == "__main__":
 
     carbon = carbon_client.fetch(
         start=start,
-        end=end
+        end=end,
     )
 
-    # -----------------------------------
-    # FETCH GENERATION MIX DATA
-    # -----------------------------------
-
-    generation_client = GenerationMixClient()
-
-    generation = generation_client.fetch()
 
     # -----------------------------------
     # FETCH WEATHER DATA
@@ -326,13 +286,14 @@ if __name__ == "__main__":
 
     weather = weather_client.fetch(
         start_date=start,
-        end_date=end
+        end_date=end,
+
     )
 
     weather_fcst = weather_client.fetch(
         start_date=start,
         end_date=end,
-        forecast=True
+        source='historical_forecast'
     )
 
     weather_df = weather.join(weather_fcst)
@@ -343,7 +304,6 @@ if __name__ == "__main__":
 
     alignment = AlignmentPipeline(
         carbon_df=carbon,
-        gen_df=generation,
         weather_df=weather_df
     )
 

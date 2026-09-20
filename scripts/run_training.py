@@ -11,11 +11,10 @@ This script:
 
 from carbon_forecast.data.ingestion import (
     CarbonIntensityClient,
-    GenerationMixClient,
     WeatherClient,
 )
 from carbon_forecast.data.alignment import AlignmentPipeline
-from carbon_forecast.features.engineering import FeatureEngineer
+from carbon_forecast.features.engineering import FeatureEngineer, shape_features
 from carbon_forecast.models.lgbm import LGBMForecaster
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import numpy as np
@@ -67,17 +66,6 @@ HORIZON = config['horizon']
 
 LGBM_PARAMS = config['model']['params']
 
-# Columns that are targets or metadata — not features
-DROP_COLS = [
-    "to", "forecast", "index",
-    # Raw generation (use lagged versions instead)
-    "WIND", "SOLAR", "GAS", "FOSSIL", "GENERATION",
-    "NUCLEAR", "IMPORTS", "COAL", "HYDRO", "BIOMASS",
-    "OTHER", "STORAGE", "LOW_CARBON", "ZERO_CARBON", "RENEWABLE",
-    # Ratios computed from raw generation (leaky)
-    "wind_share", "solar_share", "fossil_share", "renewable_share",
-]
-
 
 # -----------------------------------
 # DATA LOADING
@@ -100,20 +88,13 @@ def load_or_fetch(name: str, path: str, fetch_fn: callable) -> pd.DataFrame:
     return df
 
 
-def fetch_all_data(start: str, end: str
-                   ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame,]:
-    """Fetch carbon intensity, generation mix, and weather data."""
+def fetch_all_data(start: str, end: str) -> tuple[pd.DataFrame, pd.DataFrame,]:
+    """Fetch carbon intensity, and weather data."""
 
     carbon = load_or_fetch(
         "carbon intensity",
         f"{CACHE_DIR}/carbon_{start}_{end}.parquet",
         lambda: CarbonIntensityClient().fetch(start=start, end=end),
-    )
-
-    gen = load_or_fetch(
-        "generation mix",
-        f"{CACHE_DIR}/gen_{start}_{end}.parquet",
-        lambda: GenerationMixClient().fetch(start=start, end=end),
     )
 
     def fetch_weather():
@@ -128,50 +109,23 @@ def fetch_all_data(start: str, end: str
         fetch_weather,
     )
  
-    return carbon, gen, weather
+    return carbon, weather
 
 
 # -----------------------------------
-# FEATURE PREPARATION
+# TARGET PREPARATION
 # -----------------------------------
 
-def prepare_features(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
+def add_target(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
     """
-    Prepare feature matrix for a given forecast horizon.
-
     Steps:
         1. Create shifted target for the specified horizon
-        2. Shift forecast weather to align with target time
-        3. Remove non-feature columns
-        4. Remove actual weather (only forecasts available at inference)
-        5. Drop rows with NaN from lag/rolling/shift operations
+        2. Drop rows with NaN from lag/rolling/shift operations
     """
     df = df.copy()
 
     # Target: carbon intensity at T + horizon
     df["target"] = df[TARGET_COL].shift(-horizon)
-
-    # Shift forecast weather to align with target time
-    fcst_cols = [c for c in df.columns if "_fcst_" in c]
-    for col in fcst_cols:
-        df[f"{col}_target"] = df[col].shift(-horizon)
-
-    # Drop columns that shouldn't be features
-    cols_to_drop = [c for c in DROP_COLS if c in df.columns]
-    df = df.drop(columns=cols_to_drop)
-
-    # Drop raw forecast weather (keep only target-aligned versions)
-    df = df.drop(columns=fcst_cols)
-
-    # Drop actual weather (not available at inference time)
-    actual_weather = [
-        c for c in df.columns
-        if any(loc in c for loc in ["aberdeen", "glasgow", "london", "exeter"])
-        and "_fcst_" not in c
-        and "lag" not in c
-        and "rolling" not in c
-    ]
-    df = df.drop(columns=actual_weather)
 
     # Drop NaN rows from lags, rolling, and target shift
     df = df.dropna()
@@ -271,6 +225,7 @@ def import_to_mlflow(
     persistence_pred,
     HORIZON,
     version,
+    quantile_model = None
 ):
     """
     Log model artefacts, metrics, and metadata to MLflow.
@@ -384,8 +339,12 @@ def import_to_mlflow(
         # - comparing forecast horizons
         with mlflow.start_run(
             run_name=f"{version}",
-            nested=True,
-        ):
+            nested=True) as run:
+            # -----------------------------------
+            # GET RUN ID
+            # -----------------------------------
+
+            run_id = run.info.run_id
 
             # -----------------------------------
             # LOG FEATURE IMPORTANCE
@@ -449,6 +408,9 @@ def import_to_mlflow(
             schema = {
                 "features": X_train.columns.tolist(),
                 "target": TARGET_COL,
+                "horizon": HORIZON,
+                "quantiles": [0.1, 0.5, 0.9],
+                "run_id": run_id
             }
 
             mlflow.log_dict(
@@ -480,6 +442,18 @@ def import_to_mlflow(
 
             # Remove temporary local file
             os.remove("temp_model.pkl")
+
+            if quantile_model is not None:
+                with open("quantile_model.pkl", "wb") as f:
+                    pickle.dump(quantile_model, f)
+                
+                mlflow.log_artifact(
+                    "quantile_model.pkl",
+                    f"quantile_model_{version}",
+                )
+
+                # Remove temporary local file
+                os.remove("quantile_model.pkl")
 
             # -----------------------------------
             # LOG INPUT EXAMPLE
@@ -513,6 +487,8 @@ def import_to_mlflow(
         "Model successfully uploaded to MLflow"
     )
 
+    return schema
+
 
 # -----------------------------------
 # MAIN
@@ -520,14 +496,15 @@ def import_to_mlflow(
 
 def main():
     # 1. Load data
-    carbon, gen, weather = fetch_all_data(START_DATE, END_DATE)
+    carbon, weather = fetch_all_data(START_DATE, END_DATE)
     
     # 2. Align
-    aligned_df = AlignmentPipeline(carbon, gen, weather).transform()
+    aligned_df = AlignmentPipeline(carbon, weather).transform()
     
     # 3. Features
     featured_df = FeatureEngineer(target_col=TARGET_COL).transform(aligned_df)
-    model_df = prepare_features(featured_df, horizon=HORIZON)
+    d_features = shape_features(featured_df, horizon=HORIZON)
+    model_df = add_target(d_features, horizon=HORIZON)
     
     # 4. Walk-forward CV
     cv_results = walk_forward_cv(model_df)
@@ -554,11 +531,22 @@ def main():
     failure_df = failure.report()
     
     # 7. Save everything
-    model.save(os.path.join(PROJECT_ROOT, f"outputs/models/lgbm_t{HORIZON}.pkl"))
-    # Save predictions for agent script to use later
-    pd.DataFrame({"y_true": y_test, "y_pred": y_pred}).to_parquet(
-        os.path.join(PROJECT_ROOT, "outputs/predictions/latest.parquet"))
+    predictions_path = os.path.join(PROJECT_ROOT, "outputs/predictions/latest.parquet")
+    schema_path = os.path.join(PROJECT_ROOT, "outputs/schemas/latest_schema.json")
 
+    os.makedirs(os.path.dirname(predictions_path), exist_ok=True)
+    os.makedirs(os.path.dirname(schema_path), exist_ok=True)
+    
+    model.save(os.path.join(PROJECT_ROOT, f"outputs/models/lgbm_t{HORIZON}.pkl"))
+    quantile_model.save(os.path.join(PROJECT_ROOT, f"outputs/models/lgbm_quantile_t{HORIZON}.pkl"))
+    
+    # Save to mlflow
+    feature_schema = import_to_mlflow(model, y_test, y_pred, X_train, TARGET_COL, stratified_results, persistence_pred, HORIZON, 'prod_no_gen_fcst', quantile_model)
+    
+    # Save predictions for agent script to use later
+    pd.DataFrame({"y_true": y_test, "y_pred": y_pred}).to_parquet(predictions_path)
+    with open(schema_path, "w") as file:
+        json.dump(feature_schema, file)
 
 if __name__ == "__main__":
     main()

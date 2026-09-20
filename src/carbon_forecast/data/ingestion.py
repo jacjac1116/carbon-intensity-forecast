@@ -334,7 +334,7 @@ class WeatherClient(BaseAPIClient):
     def fetch(self, 
               start_date: str, 
               end_date: str,
-              forecast: bool = False,
+              source: str = 'archive',
               cols: list[str] = None,
               locations: dict = None
               ):
@@ -347,6 +347,11 @@ class WeatherClient(BaseAPIClient):
 
             end_date:
                 End date in YYYY-MM-DD format.
+            
+            source:
+                archive: to loom at past data
+                live: to look at forecasted data for tomorrow
+                historical_forecast: to look at historical forecasts
 
             cols:
                 List of hourly weather variables to retrieve.
@@ -452,10 +457,27 @@ class WeatherClient(BaseAPIClient):
             }
 
             # Execute API request using shared BaseAPIClient logic
-            base = ("https://historical-forecast-api.open-meteo.com/v1/forecast"
-                    if forecast
-                    else self.base_url
-                )
+            if source == 'historical_forecast':
+                base = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+
+                # Rename weather columns using location prefix
+                prefix = f'{name}_fcst'
+
+            elif source == 'live':
+                base = "https://api.open-meteo.com/v1/forecast"
+
+                params.pop('start_date', None) # deletes key f it exists
+                params.pop('end_date', None)
+                params['forecast_days'] = 2
+
+                # Rename weather columns using location prefix
+                prefix = f'{name}_fcst' 
+
+            else:
+                base = self.base_url
+
+                # Rename weather columns using location prefix
+                prefix = name
 
             data = self._make_request(base, params=params)
 
@@ -475,9 +497,6 @@ class WeatherClient(BaseAPIClient):
                 df["time"],
                 utc=True
             )
-
-            # Rename weather columns using location prefix
-            prefix = f'{name}_fcst' if forecast else name
 
             df = df.rename(columns={col:f'{prefix}_{col}' for col in df.columns if col != 'time'})
 
@@ -512,7 +531,9 @@ if __name__ == "__main__":
 #    df = client.fetch(start="2024-01-01", end="2024-07-07")
 
     client = WeatherClient()
-    df = client.fetch(start_date='2023-07-23', end_date='2023-07-25')
+    df = client.fetch(start_date='2026-09-02', end_date='2026-09-16', source='live')
+    print(df.index.max())
+    print(df.columns.tolist()[:3])
 
     print(df.head())
     print(f"\nShape: {df.shape}")
