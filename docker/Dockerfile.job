@@ -1,0 +1,36 @@
+# Set up a python base image
+FROM python:3.11-slim
+
+# Set working directory inside the container
+WORKDIR /app
+
+# Install system dependencies for LightGBM
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files into the container
+COPY pyproject.toml .
+COPY src/ src/
+
+# Install the package and dependencies
+RUN pip install --no-cache-dir .
+
+# Copy remaining files not needed to run pip install
+COPY outputs/models outputs/models
+COPY scripts/ scripts/
+COPY configs/ configs/
+COPY outputs/schemas outputs/schemas
+#     ^                ^
+#     |                └── destination: /app/outputs/ inside the container
+#     └── source: outputs/ from your project folder
+
+# Define environment variables
+ENV MODEL_DIR=/app/outputs/models
+ENV CONFIGS_PATH=/app/configs/model/lgbm_24h.yaml
+ENV SCHEMAS_PATH=/app/outputs/schemas/latest_schema.json
+ENV TABLE_ID=gen-lang-client-0232862267.carbon_forecast.predictions
+ENV GCP_PROJECT=gen-lang-client-0232862267
+
+# Run action
+ENTRYPOINT [ "python", "scripts/run_daily_prediction.py" ]

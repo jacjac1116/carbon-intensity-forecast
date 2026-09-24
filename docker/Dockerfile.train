@@ -12,14 +12,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files into the container
 COPY pyproject.toml .
 COPY src/ src/
+
+# Install the package and dependencies
+RUN pip install --no-cache-dir .
+
+# Copy remaining files not needed to run pip install
 COPY configs/ configs/
 COPY scripts/ scripts/
 #     ^         ^
 #     |         └── destination: /app/src/ inside the container
 #     └── source: src/ from your project folder
 
-# Install the package and dependencies
-RUN pip install --no-cache-dir -e .
 
 # Defualt command: run training
 CMD ["python", "scripts/run_training.py"]

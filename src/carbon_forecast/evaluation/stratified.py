@@ -77,8 +77,9 @@ class StratifiedEvaluator:
                 slicer[bin_name] = self.df['actual'].between(lower_val, upper_val)
         
         elif param == 'weather':
-            weather_cols = [ "london_temperature_2m", "exeter_direct_radiation",
-                            "aberdeen_wind_speed_100m"]
+            weather_cols = ["london_fcst_temperature_2m_target",
+                "exeter_fcst_direct_radiation_target",
+                "aberdeen_fcst_wind_speed_100m_target"]
             for col in weather_cols:
                 for bin_name, (lower, upper) in self.FEATURE_BINS.items():
                     lower_val = self.df[col].quantile(lower)
@@ -163,12 +164,3 @@ class StratifiedEvaluator:
         logger.info(f"\n{'='*70}")
 
         return results
-
-
-
-
-            
-
-            
-
-

@@ -8,9 +8,9 @@ from carbon_forecast.features.engineering import FeatureEngineer, shape_features
 import yaml
 import logging
 import json
-import time
 from pathlib import Path
 import os
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,15 @@ def build_live_features():
     # Transforms and prepares dataset
     aligned_df = AlignmentPipeline(carbon, weather).transform() 
     featured_df = FeatureEngineer(target_col=target_col).transform(aligned_df)
+
     model_df = shape_features(featured_df, horizon=horizon)
+    
+    actuals = featured_df['actual']
+    persistence = model_df[[]].join(actuals, how='left').dropna()
+
+    # Validates Persistence
+    if 'actual' not in persistence:
+        raise ValueError('Gaps in the carbon dataset')
 
     # Validates dataset with schema used in model
     SCHEMAS_PATH = Path(os.environ.get('SCHEMAS_PATH', 'outputs/schemas/latest_schema.json'))
@@ -66,14 +74,18 @@ def build_live_features():
     # Captures how fresh carbon data is
     as_of = carbon['from'].max()
 
-    return model_df[features], as_of
+    return model_df[features], as_of, persistence
 
 if __name__ == '__main__':
 
-    for i in range(5):
-        t0 = time.perf_counter()
-        df, as_of = build_live_features()
-        print(f'{time.perf_counter() -t0:.2f}s')
+    
+    df, as_of, persistence = build_live_features()
 
-    print(as_of)
-    print(df)
+    print(persistence)
+    
+    
+
+    
+
+
+    
