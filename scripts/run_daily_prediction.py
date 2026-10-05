@@ -1,4 +1,5 @@
 from carbon_forecast.features.live import build_live_features
+from carbon_forecast.data.actuals import pull_actuals
 import os
 from pathlib import Path
 from carbon_forecast.models.lgbm import LGBMForecaster
@@ -17,38 +18,16 @@ logger = logging.getLogger(__name__)
 MODEL_DIR = Path(os.environ.get('MODEL_DIR', 'outputs/models'))
 CONFIGS_PATH = Path(os.environ.get('CONFIGS_PATH', 'configs/model/lgbm_24h.yaml'))
 SCHEMAS_PATH = Path(os.environ.get('SCHEMAS_PATH', 'outputs/schemas/latest_schema.json'))
-TABLE_ID = os.environ.get('TABLE_ID', 'gen-lang-client-0232862267.carbon_forecast.predictions')
+FORECAST_TABLE_ID = os.environ.get('FORECAST_TABLE_ID', 'gen-lang-client-0232862267.carbon_forecast.predictions')
+ACTUALS_TABLE_ID = os.environ.get('ACTUALS_TABLE_ID', 'gen-lang-client-0232862267.carbon_forecast.actuals')
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'gen-lang-client-0232862267')
 
 
-def upload_to_bigquery(df: pd.DataFrame, table_id: str) -> None:
+def upload_to_bigquery(df: pd.DataFrame, table_id: str, client: bigquery.Client) -> None:
     """
     Appends a dataset directly to existing table
     """
-    # 1. Initialise the BigQuery Client
-    client = bigquery.Client(project=PROJECT_ID)
 
-    # operation 1: protection from duplicating data
-    predicted_at = df['predicted_at'].iloc[0]
-
-    # 1. configure sql query with the variables used
-    config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter('predicted_at', 'TIMESTAMP', predicted_at)
-        ])
-    
-    # 2. Create sql operation
-    job = client.query(f"""
-        DELETE FROM `{table_id}`
-        WHERE DATE(predicted_at) = DATE(@predicted_at)
-                 """, job_config=config)
-    
-    # 3. Wait for the upload workflow to finish
-    job.result()
-
-    logger.info(f'{job.num_dml_affected_rows} rows dropped')
-
-    # operation 2: push rows
     # 1. Configure the insertion job to keep all existing records 
     # and simply add rows to the bottom
     job_config = bigquery.LoadJobConfig(
@@ -67,6 +46,50 @@ def upload_to_bigquery(df: pd.DataFrame, table_id: str) -> None:
     job.result()
 
     logger.info(f'Successfully appended data to {table_id}')
+
+def write_predictions(df: pd.DataFrame, table_id: str, client: bigquery.Client) -> None:
+    "Protection from duplicating data in forecasting table"
+
+    target_time = df['predicted_at'].iloc[0]
+
+    # 1. configure sql query with the variables used
+    config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_time', 'TIMESTAMP', target_time)
+        ])
+    
+    # 2. Create sql operation
+    job = client.query(f"""
+        DELETE FROM `{table_id}`
+        WHERE DATE(predicted_at) = DATE(@target_time)
+                 """, job_config=config)
+    
+    # 3. Wait for the upload workflow to finish
+    job.result()
+
+    logger.info(f'{job.num_dml_affected_rows} rows dropped from {table_id}')
+
+def write_actuals(df: pd.DataFrame, table_id: str, client: bigquery.Client) -> None:
+    "Protection from duplicating data in actuals table"
+
+    window_start = df['target_time'].min()
+
+    # 1. configure sql query with the variables used
+    config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('window_start', 'TIMESTAMP', window_start)
+        ])
+    
+    # 2. Create sql operation
+    job = client.query(f"""
+        DELETE FROM `{table_id}`
+        WHERE target_time >= @window_start
+                 """, job_config=config)
+    
+    # 3. Wait for the upload workflow to finish
+    job.result()
+
+    logger.info(f'{job.num_dml_affected_rows} rows dropped from {window_start} in {table_id}')
 
 
 def create_forecast():
@@ -112,8 +135,8 @@ def create_forecast():
     final_forecast['exeter_fcst_direct_radiation_target'] = df['exeter_fcst_direct_radiation_target']
     final_forecast['aberdeen_fcst_wind_speed_100m_target'] = df['aberdeen_fcst_wind_speed_100m_target']
     
-    final_forecast['horizon_steps'] = ((final_forecast['target_time'] - final_forecast['predicted_at'])
-                                    .dt.total_seconds() / (30 * 60) # covert to half hours
+    final_forecast['horizon_steps'] = ((final_forecast['target_time'] - final_forecast['predicted_at'].dt.floor('30min'))
+                                    .dt.total_seconds() / (30 * 60) # # gap in half-hours, now always a whole number
                                     ).astype(int) # rounds it 
     
     final_forecast = final_forecast.reset_index()
@@ -126,5 +149,15 @@ def create_forecast():
 
 if __name__ == '__main__':
 
-    final_df = create_forecast()
-    upload_to_bigquery(final_df, TABLE_ID)
+    forecast_df = create_forecast()
+    actual_df = pull_actuals()
+
+    # Initialise the BigQuery Client
+    client = bigquery.Client(project=PROJECT_ID)
+
+
+    write_predictions(forecast_df, FORECAST_TABLE_ID, client)
+    upload_to_bigquery(forecast_df, FORECAST_TABLE_ID, client)
+
+    write_actuals(actual_df, ACTUALS_TABLE_ID, client)
+    upload_to_bigquery(actual_df, ACTUALS_TABLE_ID, client)
