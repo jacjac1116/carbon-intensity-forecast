@@ -21,6 +21,8 @@ dependencies = [
     "pytest",
     "pyprojroot",
     "google-cloud-bigquery",
+    "pandas-gbq",
+    "ipykernel",
 ]
 
 # Build system - how pip installs the package
