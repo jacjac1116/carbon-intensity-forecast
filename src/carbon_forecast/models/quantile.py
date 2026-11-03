@@ -2,8 +2,12 @@ from carbon_forecast.models.lgbm import LGBMForecaster
 from carbon_forecast.models.base import BaseForecaster
 import logging
 import pandas as pd
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+def quantile_sorter(preds: np.array) -> np.array:
+    return np.sort(preds, axis=1)
 
 class QuantileForecaster(BaseForecaster):
     
@@ -35,12 +39,15 @@ class QuantileForecaster(BaseForecaster):
 
     def predict(self, X):
 
-        results = {}
-        for alpha, model in self.list_models.items():
+        predictions = []
+        for model in self.list_models.values():
+            predictions.append(model.predict(X))
 
-            results[f'q{int(alpha * 100)}'] = model.predict(X)
+        stacked = np.column_stack(predictions)
+        ordered = quantile_sorter(stacked)
+        columns = [f'q{int(alpha * 100)}' for alpha in sorted(self.list_models.keys())]
 
-        return pd.DataFrame(results, index = X.index)
+        return pd.DataFrame(ordered, columns=columns, index = X.index)
 
             
 
