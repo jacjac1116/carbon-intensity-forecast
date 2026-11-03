@@ -99,8 +99,8 @@ def fetch_all_data(start: str, end: str) -> tuple[pd.DataFrame, pd.DataFrame,]:
 
     def fetch_weather():
         client = WeatherClient(timeout=60)
-        actual = client.fetch(start_date=start, end_date=end)
-        forecast = client.fetch(start_date=start, end_date=end, forecast=True)
+        actual = client.fetch(start_date=start, end_date=end, source='archive')
+        forecast = client.fetch(start_date=start, end_date=end, source='historical_forecast')
         return actual.join(forecast)
  
     weather = load_or_fetch(
