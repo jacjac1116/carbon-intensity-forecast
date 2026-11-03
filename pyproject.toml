@@ -18,11 +18,15 @@ dependencies = [
     "pyyaml",
     "anthropic",
     "google-genai",
-    "pytest",
     "pyprojroot",
     "google-cloud-bigquery",
     "pandas-gbq",
+]
+
+[project.optional-dependencies]
+dev = [
     "ipykernel",
+    "pytest",
 ]
 
 # Build system - how pip installs the package
