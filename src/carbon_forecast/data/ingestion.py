@@ -349,7 +349,7 @@ class WeatherClient(BaseAPIClient):
                 End date in YYYY-MM-DD format.
             
             source:
-                archive: to loom at past data
+                archive: to look at past data
                 live: to look at forecasted data for tomorrow
                 historical_forecast: to look at historical forecasts
 

@@ -29,8 +29,10 @@ COPY outputs/schemas outputs/schemas
 ENV MODEL_DIR=/app/outputs/models
 ENV CONFIGS_PATH=/app/configs/model/lgbm_24h.yaml
 ENV SCHEMAS_PATH=/app/outputs/schemas/latest_schema.json
-ENV TABLE_ID=gen-lang-client-0232862267.carbon_forecast.predictions
+ENV FORECAST_TABLE_ID=gen-lang-client-0232862267.carbon_forecast.predictions
+ENV ACTUALS_TABLE_ID=gen-lang-client-0232862267.carbon_forecast.actuals
 ENV GCP_PROJECT=gen-lang-client-0232862267
+ENV PYTHONDONTWRITEBYTECODE=1
 
 # Run action
 ENTRYPOINT [ "python", "scripts/run_daily_prediction.py" ]

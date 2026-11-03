@@ -53,11 +53,13 @@ def build_live_features():
     model_df = shape_features(featured_df, horizon=horizon)
     
     actuals = featured_df['actual']
-    persistence = model_df[[]].join(actuals, how='left').dropna()
+    persistence = model_df[[]].join(actuals, how='left')
 
     # Validates Persistence
-    if 'actual' not in persistence:
-        raise ValueError('Gaps in the carbon dataset')
+    n_missing = persistence['actual'].isnull().sum()
+
+    if n_missing > 0:
+        raise ValueError(f'{n_missing} of {len(persistence)} persistence values missing - gaps in the carbon dataset')
 
     # Validates dataset with schema used in model
     SCHEMAS_PATH = Path(os.environ.get('SCHEMAS_PATH', 'outputs/schemas/latest_schema.json'))
