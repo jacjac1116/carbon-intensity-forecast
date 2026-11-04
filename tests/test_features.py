@@ -1,5 +1,6 @@
 import pandas as pd
 from carbon_forecast.features.engineering import FeatureEngineer
+from pyprojroot import here
 
 def test_lag_features():
     """
@@ -47,3 +48,6 @@ def test_rolling_features():
     # 7d and 30d should be all NaN (not enough data)
     assert result["rolling_7d"].isna().all()
     assert result["rolling_30d"].isna().all()
+
+def test_build_features():
+    print(here())

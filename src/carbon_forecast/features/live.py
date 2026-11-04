@@ -14,7 +14,14 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+def build_features(carbon: pd.DataFrame, weather: pd.DataFrame, target_col: str, horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # Transforms and prepares dataset
+    aligned_df = AlignmentPipeline(carbon, weather).transform() 
+    featured_df = FeatureEngineer(target_col=target_col).transform(aligned_df)
 
+    model_df = shape_features(featured_df, horizon=horizon)
+
+    return featured_df, model_df
 
 def build_live_features():
     """
@@ -46,12 +53,8 @@ def build_live_features():
     forecast = weather_client.fetch(start_date=start.isoformat(), end_date=end.isoformat(), source='live')
     weather = actual.join(forecast, how='outer')
 
-    # Transforms and prepares dataset
-    aligned_df = AlignmentPipeline(carbon, weather).transform() 
-    featured_df = FeatureEngineer(target_col=target_col).transform(aligned_df)
+    featured_df, model_df = build_features(carbon, weather, target_col, horizon)
 
-    model_df = shape_features(featured_df, horizon=horizon)
-    
     actuals = featured_df['actual']
     persistence = model_df[[]].join(actuals, how='left')
 
