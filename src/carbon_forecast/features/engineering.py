@@ -5,6 +5,8 @@ import holidays
 
 logger = logging.getLogger(__name__)
 
+MIN_FRACTION = 0.9
+
 class FeatureEngineer():
 
     def __init__(self, target_col: str):
@@ -20,23 +22,26 @@ class FeatureEngineer():
 
         return df
     
+    def _rolling(self, series: pd.Series, window: int):
+        return series.rolling(window=window, min_periods=int(window * MIN_FRACTION))
+    
     def _add_rolling_features(self, df: pd.DataFrame, ) -> pd.DataFrame:
         
-        df['rolling_24h'] = df[self.target_col].rolling(window=48).mean()
-        df['rolling_24h_std'] = df[self.target_col].rolling(window=48).std()
-        df['london_temperature_2m_rolling_24h'] = df['london_temperature_2m'].rolling(window=48).mean()
-        df['exeter_direct_radiation_rolling_24h'] = df['exeter_direct_radiation'].rolling(window=48).mean()
-        df['glasgow_wind_speed_100m_rolling_24h'] = df['glasgow_wind_speed_100m'].rolling(window=48).mean()
-        df['aberdeen_wind_speed_100m_rolling_24h'] = df['aberdeen_wind_speed_100m'].rolling(window=48).mean()
+        df['rolling_24h'] = self._rolling(df[self.target_col], 48).mean()
+        df['rolling_24h_std'] = self._rolling(df[self.target_col], 48).std()
+        df['london_temperature_2m_rolling_24h'] = self._rolling(df['london_temperature_2m'], 48).mean()
+        df['exeter_direct_radiation_rolling_24h'] = self._rolling(df['exeter_direct_radiation'], 48).mean()
+        df['glasgow_wind_speed_100m_rolling_24h'] = self._rolling(df['glasgow_wind_speed_100m'], 48).mean()
+        df['aberdeen_wind_speed_100m_rolling_24h'] = self._rolling(df['aberdeen_wind_speed_100m'], 48).mean()
 
-        df['glasgow_wind_speed_100m_rolling_72h'] = df['glasgow_wind_speed_100m'].rolling(window=72*2).mean()
-        df['aberdeen_wind_speed_100m_rolling_72h'] = df['aberdeen_wind_speed_100m'].rolling(window=72*2).mean()
+        df['glasgow_wind_speed_100m_rolling_72h'] = self._rolling(df['glasgow_wind_speed_100m'], 72 * 2).mean()
+        df['aberdeen_wind_speed_100m_rolling_72h'] = self._rolling(df['aberdeen_wind_speed_100m'], 72 * 2).mean()
        
-        df['rolling_7d'] = df[self.target_col].rolling(window=48*7).mean()
-        df['rolling_7d_std'] = df[self.target_col].rolling(window=48*7).std()
+        df['rolling_7d'] = self._rolling(df[self.target_col], 48 * 7).mean()
+        df['rolling_7d_std'] = self._rolling(df[self.target_col], 48 * 7).std()
        
-        df['rolling_30d'] = df[self.target_col].rolling(window=48*30).mean()
-        df['rolling_30d_std'] = df[self.target_col].rolling(window=48*30).std()
+        df['rolling_30d'] = self._rolling(df[self.target_col], 48 * 30).mean()
+        df['rolling_30d_std'] = self._rolling(df[self.target_col], 48 * 30).std()
         
         return df
     
