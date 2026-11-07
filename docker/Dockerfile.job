@@ -29,7 +29,7 @@ COPY src/ src/
 RUN pip install --no-cache-dir --no-deps . && pip check
 
 COPY outputs/models outputs/models
-COPY scripts/ scripts/
+COPY scripts/run_daily_prediction.py scripts/
 COPY configs/ configs/
 COPY outputs/schemas outputs/schemas 
 # ^ ^ 
