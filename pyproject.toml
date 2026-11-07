@@ -27,6 +27,7 @@ dependencies = [
 dev = [
     "ipykernel",
     "pytest",
+    "uv"
 ]
 
 # Build system - how pip installs the package

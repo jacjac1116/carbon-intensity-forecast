@@ -1,38 +1,133 @@
-# Set up a python base image
-FROM python:3.11-slim
+# ---------------------------------------------------------------------
+# Base image
+# ---------------------------------------------------------------------
 
-# Set working directory inside the container
+# Use Python 3.11.18 on a lightweight Debian Trixie image.
+# The SHA256 digest pins the exact image version for reproducible builds.
+FROM python:3.11.18-slim-trixie@sha256:65bd3d9f1d7fa268dd1909973ba7eb4bdf41f6dcf2cfbe76ba9528b170f3fd79
+
+
+# ---------------------------------------------------------------------
+# Working directory
+# ---------------------------------------------------------------------
+
+# Set the working directory inside the container.
+# All subsequent commands will execute relative to /app.
 WORKDIR /app
 
-# Install system dependencies for LightGBM
+
+# ---------------------------------------------------------------------
+# System dependencies
+# ---------------------------------------------------------------------
+
+# Install system-level dependencies required by LightGBM.
+#
+# libgomp1 provides the GNU OpenMP runtime, which LightGBM uses
+# for parallel processing.
+#
+# --no-install-recommends avoids installing unnecessary packages.
+# Removing apt lists afterwards reduces the final image size.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files into the container
+
+# ---------------------------------------------------------------------
+# Python dependencies
+# ---------------------------------------------------------------------
+
+# Copy the dependency lockfile into the container.
+COPY requirements.lock .
+
+# Install Python dependencies using the lockfile.
+#
+# --no-cache-dir prevents pip from storing downloaded packages,
+# reducing the container image size.
+#
+# --requires-hashes ensures installed packages match the hashes
+# specified in the lockfile, improving dependency security
+# and reproducibility.
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+
+# ---------------------------------------------------------------------
+# Project installation
+# ---------------------------------------------------------------------
+
+# Copy the project configuration file and source code.
 COPY pyproject.toml .
 COPY src/ src/
 
-# Install the package and dependencies
-RUN pip install --no-cache-dir .
+# Install the project itself without reinstalling its dependencies.
 
-# Copy remaining files not needed to run pip install
+# Dependencies have already been installed from the lockfile.
+# --no-deps prevents pip from resolving or installing them again.
+
+# pip check verifies that the installed packages have compatible
+# dependency requirements.
+RUN pip install --no-cache-dir --no-deps . && pip check
+
+
+# ---------------------------------------------------------------------
+# Application files
+# ---------------------------------------------------------------------
+
+# Copy the remaining project files required at runtime.
+#
+# These are not needed during the Python package installation,
+# so they are copied separately.
+
+# Trained machine learning models
 COPY outputs/models outputs/models
-COPY scripts/ scripts/
-COPY configs/ configs/
-COPY outputs/schemas outputs/schemas
-#     ^                ^
-#     |                └── destination: /app/outputs/ inside the container
-#     └── source: outputs/ from your project folder
 
-# Define environment variables
+# Prediction execution scripts
+COPY scripts/ scripts/
+
+# Model and application configuration files
+COPY configs/ configs/
+
+# Feature schemas used to validate model inputs
+COPY outputs/schemas outputs/schemas
+
+# Source                 Destination
+# outputs/models         /app/outputs/models
+# scripts/               /app/scripts/
+# configs/               /app/configs/
+# outputs/schemas        /app/outputs/schemas
+
+
+# ---------------------------------------------------------------------
+# Environment variables
+# ---------------------------------------------------------------------
+
+# Directory containing the trained machine learning models.
 ENV MODEL_DIR=/app/outputs/models
+
+# Path to the LightGBM model configuration.
 ENV CONFIGS_PATH=/app/configs/model/lgbm_24h.yaml
+
+# Path to the expected feature schema.
 ENV SCHEMAS_PATH=/app/outputs/schemas/latest_schema.json
+
+# Google BigQuery table used to store forecast predictions.
 ENV FORECAST_TABLE_ID=gen-lang-client-0232862267.carbon_forecast.predictions
+
+# Google BigQuery table containing actual carbon intensity values.
 ENV ACTUALS_TABLE_ID=gen-lang-client-0232862267.carbon_forecast.actuals
+
+# Google Cloud Platform project identifier.
 ENV GCP_PROJECT=gen-lang-client-0232862267
+
+# Prevent Python from generating __pycache__ and .pyc files.
+# This avoids unnecessary files being created inside the container.
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Run action
-ENTRYPOINT [ "python", "scripts/run_daily_prediction.py" ]
+
+# ---------------------------------------------------------------------
+# Application entry point
+# ---------------------------------------------------------------------
+
+# Execute the daily prediction script when the container starts.
+#
+# This runs the forecasting pipeline using the models,
+# configurations and schemas copied into the container.
+ENTRYPOINT ["python", "scripts/run_daily_prediction.py"]
