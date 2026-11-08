@@ -1,0 +1,55 @@
+name: ci
+
+on: push
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            - uses: actions/setup-python@v6
+              with:
+                python-version: "3.11.18"
+            
+            # Installs every library following the lock file
+            - run: pip install --require-hashes -r requirements.lock
+
+            # Installs project while maintaining correct versions
+            - run: pip install --no-deps -e .
+            - run: pip install pytest==9.0.3
+            - run: pip check
+            - run: pytest tests
+
+    # Job 2: build the image and push it to Google
+    build:
+      # Wait for the tests to pass, and only run on main
+      needs: test
+      if: github.ref == 'refs/heads/main'
+      runs-on: ubuntu-latest
+
+      # Allowed to read the code and to ask GitHub for an ID card
+      permissions:
+        contents: read
+        id-token: write
+      
+      # The image's full name, saved here so I don't have to type it multiple times
+      env:
+        IMAGE: europe-west2-docker.pkg.dev/gen-lang-client-0232862267/carbon-forecast/carbon-forecast-job
+      
+      steps:
+        # New machine, so get the code again
+        - uses: actions/checkout@v6
+
+        # Log in to Gogle as github-deployer
+        - uses: google-github-actions/auth@v3
+          with:
+            workload_identity_provider: projects/506607436710/locations/global/workloadIdentityPools/github/providers/github
+            service_account: github-deployer@gen-lang-client-0232862267.iam.gserviceaccount.com
+       
+        # Set up the gcloud command with that login and let Docker use it
+        - uses: google-github-actions/setup-gcloud@v3
+        - run: gcloud auth configure-docker europe-west2-docker.pkg.dev --quiet
+
+        # Build the image, tagged with the commit's ID, then push it
+        - run: docker build --platform linux/amd64 -f docker/Dockerfile.job -t $IMAGE:${{ github.sha }} .
+        - run: docker push $IMAGE:${{ github.sha }}
