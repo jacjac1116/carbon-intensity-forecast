@@ -51,5 +51,5 @@ jobs:
         - run: gcloud auth configure-docker europe-west2-docker.pkg.dev --quiet
 
         # Build the image, tagged with the commit's ID, then push it
-        - run: docker build --platform linux/amd64 -f docker/Dockerfile.job -t $IMAGE:${{ github.sha }} .
+        - run: docker build --build-arg COMMIT_SHA=${{ github.sha }} --platform linux/amd64 -f docker/Dockerfile.job -t $IMAGE:${{ github.sha }} .
         - run: docker push $IMAGE:${{ github.sha }}

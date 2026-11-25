@@ -33,8 +33,12 @@ COPY scripts/run_daily_prediction.py scripts/
 COPY configs/ configs/
 COPY outputs/schemas outputs/schemas 
 # ^ ^ 
-# | └── destination: /app/outputs/ inside the container 
-# └── source: outputs/ from your project folder
+# | └── destination: /app/outputs/schemas inside the container 
+# └── source: outputs/schemas from your project folder
+
+# Receives argument from github and saves it into an environment variable
+ARG COMMIT_SHA=unknown
+ENV COMMIT_SHA=$COMMIT_SHA
 
 # Define environment variables
 ENV MODEL_DIR=/app/outputs/models

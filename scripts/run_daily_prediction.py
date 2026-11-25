@@ -21,6 +21,7 @@ SCHEMAS_PATH = Path(os.environ.get('SCHEMAS_PATH', 'outputs/schemas/latest_schem
 FORECAST_TABLE_ID = os.environ.get('FORECAST_TABLE_ID', 'gen-lang-client-0232862267.carbon_forecast.predictions')
 ACTUALS_TABLE_ID = os.environ.get('ACTUALS_TABLE_ID', 'gen-lang-client-0232862267.carbon_forecast.actuals')
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'gen-lang-client-0232862267')
+COMMIT_SHA = os.environ.get('COMMIT_SHA', 'unknown' )
 
 
 def upload_to_bigquery(df: pd.DataFrame, table_id: str, client: bigquery.Client) -> None:
@@ -130,6 +131,7 @@ def create_forecast():
     final_forecast['target_time'] = final_forecast.index + timedelta(hours= 0.5 * HORIZON)
     final_forecast['data_as_of'] = as_of
     final_forecast['model_id'] = model_id
+    final_forecast['commit_sha'] = COMMIT_SHA
     final_forecast['persistence'] = persistence['actual']
     final_forecast['london_fcst_temperature_2m_target'] = df['london_fcst_temperature_2m_target']
     final_forecast['exeter_fcst_direct_radiation_target'] = df['exeter_fcst_direct_radiation_target']
@@ -142,7 +144,7 @@ def create_forecast():
     final_forecast = final_forecast.reset_index()
 
     final_df = final_forecast[['target_time', 'predicted_at', 'data_as_of',
-                            'forecast', 'q10', 'q50', 'q90', 'horizon_steps', 'model_id',
+                            'forecast', 'q10', 'q50', 'q90', 'horizon_steps', 'model_id', 'commit_sha',
                             'persistence', 'london_fcst_temperature_2m_target', 
                             'exeter_fcst_direct_radiation_target', 'aberdeen_fcst_wind_speed_100m_target']]
     return final_df
